@@ -168,6 +168,7 @@ public final class Tracer {
             try { drainAll(err); } catch (IOException ignored) { }
         }
         appendOutput();
+        if (pendingCR) stdout.append('\r'); // a lone \r at the very end was real output
 
         if (countOnly) {
             return "{\"ok\":true,\"end\":" + Json.str(endReason) + ",\"count\":" + counted + "}";
@@ -519,8 +520,15 @@ public final class Tracer {
 
     // ---------------------------------------------------------------- program output
 
+    private boolean pendingCR = false; // a '\r' at the end of the last read whose '\n' may come next
+
     private void appendOutput() {
         String s = outBytes.takeString();
+        // Windows ends lines with \r\n; show the same \n everywhere. A \r\n can arrive split across reads.
+        if (pendingCR) s = "\r" + s;
+        pendingCR = s.endsWith("\r");
+        if (pendingCR) s = s.substring(0, s.length() - 1);
+        s = s.replace("\r\n", "\n");
         int room = MAX_OUTPUT - stdout.length();
         if (room > 0) stdout.append(s.length() <= room ? s : s.substring(0, room));
     }

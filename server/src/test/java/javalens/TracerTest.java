@@ -123,6 +123,13 @@ class TracerTest {
     }
 
     @Test
+    void windowsLineEndingsBecomePlainNewlines() throws Exception {
+        // On Windows println writes \r\n; the page should see \n on every OS.
+        String json = trace("public class Crlf { public static void main(String[] a) { System.out.print(\"a\\r\\nb\\r\\n\"); } }", "");
+        assertEquals("\"a\\nb\\n\"", stdoutOf(json));
+    }
+
+    @Test
     void java25CompactMainWorks() throws Exception {
         assertEquals("\"hi\\n\"", stdoutOf(trace("void main() { IO.println(\"hi\"); }", "")));
     }
