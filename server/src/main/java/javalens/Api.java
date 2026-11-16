@@ -1,38 +1,39 @@
+package javalens;
+
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
- * JavaLens server. Run with:  java server/src/Main.java
- * POST /run    {"code": "...", "stdin": "..."}  ->  trace JSON (a snapshot per executed line)
- * POST /count  same body                       ->  {"count": number of lines executed}
- * POST /complete, /hover, /signature  {"code", "line", "col"}  ->  editor help
+ * The HTTP endpoints the web page talks to:
+ * <pre>
+ * POST /run       {"code", "stdin"}        -> trace JSON (a snapshot per executed line)
+ * POST /count     same body                -> {"count": number of lines executed}   (Big-O chart)
+ * POST /complete, /hover, /signature  {"code", "line", "col"}  -> editor help
+ * GET  /version                            -> {"version", "latest", "url"}          (update badge)
+ * GET  /ping                               -> "javalens"                            (single-instance check)
+ * </pre>
  */
-public class Main {
-    public static void main(String[] args) throws IOException {
-        int port = args.length > 0 ? Integer.parseInt(args[0]) : 7070;
-        // Only listen on this machine: the server runs student code.
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
-        server.createContext("/run", ex -> handle(ex, false));
-        server.createContext("/count", ex -> handle(ex, true)); // line counts only, for the Big-O chart
-        // Editor help: autocomplete, hover, parameter hints (see Assist.java)
+public final class Api {
+    private Api() {}
+
+    public static void register(HttpServer server) {
+        server.createContext("/run", ex -> handleRun(ex, false));
+        server.createContext("/count", ex -> handleRun(ex, true));
         server.createContext("/complete", ex -> handleAssist(ex, Assist::complete));
         server.createContext("/hover", ex -> handleAssist(ex, Assist::hover));
         server.createContext("/signature", ex -> handleAssist(ex, Assist::signature));
-        // A few threads, so autocomplete stays snappy even while a slow program is being traced.
-        server.setExecutor(java.util.concurrent.Executors.newFixedThreadPool(4));
-        server.start();
-        System.out.println("JavaLens server listening on http://127.0.0.1:" + port);
+        server.createContext("/version", ex -> send(ex, 200, AppInfo.versionJson(), "application/json; charset=utf-8"));
+        server.createContext("/ping", ex -> send(ex, 200, Instance.PING_REPLY, "text/plain; charset=utf-8"));
     }
 
-    private static void handle(HttpExchange ex, boolean countOnly) throws IOException {
+    private static void handleRun(HttpExchange ex, boolean countOnly) throws IOException {
         if (!ex.getRequestMethod().equals("POST")) {
-            send(ex, 405, "{\"ok\":false,\"error\":\"POST only\"}");
+            sendJson(ex, 405, "{\"ok\":false,\"error\":\"POST only\"}");
             return;
         }
         Compiler.Result compiled = null;
@@ -41,23 +42,21 @@ public class Main {
             Map<String, String> req = Json.parseFlatObject(body);
             long start = System.nanoTime();
             compiled = Compiler.compile(req.getOrDefault("code", ""));
-            long compileMs = (System.nanoTime() - start) / 1_000_000;
 
             String diags = diagnosticsJson(compiled);
             if (!compiled.ok()) {
-                send(ex, 200, "{\"ok\":false,\"error\":\"compile\",\"diagnostics\":" + diags + "}");
+                sendJson(ex, 200, "{\"ok\":false,\"error\":\"compile\",\"diagnostics\":" + diags + "}");
                 return;
             }
             String stdin = req.getOrDefault("stdin", "");
             String trace = countOnly ? Tracer.count(compiled, stdin) : Tracer.run(compiled, stdin);
             long totalMs = (System.nanoTime() - start) / 1_000_000;
-            System.out.printf((countOnly ? "count" : "run") + ": compile %d ms, total %d ms%n", compileMs, totalMs);
             // Splice diagnostics (warnings) and timing into the trace object.
-            send(ex, 200, trace.substring(0, trace.length() - 1)
+            sendJson(ex, 200, trace.substring(0, trace.length() - 1)
                     + ",\"diagnostics\":" + diags + ",\"ms\":" + totalMs + "}");
         } catch (Exception e) {
             e.printStackTrace();
-            send(ex, 500, "{\"ok\":false,\"error\":\"server\",\"message\":" + Json.str(String.valueOf(e)) + "}");
+            sendJson(ex, 500, "{\"ok\":false,\"error\":\"server\",\"message\":" + Json.str(String.valueOf(e)) + "}");
         } finally {
             if (compiled != null) Compiler.deleteQuietly(compiled.dir());
         }
@@ -71,10 +70,10 @@ public class Main {
             String code = req.getOrDefault("code", "");
             int line = Integer.parseInt(req.getOrDefault("line", "1"));
             int col = Integer.parseInt(req.getOrDefault("col", "1"));
-            send(ex, 200, fn.apply(code, line, col));
+            sendJson(ex, 200, fn.apply(code, line, col));
         } catch (Exception e) {
             e.printStackTrace();
-            send(ex, 500, "{\"error\":" + Json.str(String.valueOf(e)) + "}");
+            sendJson(ex, 500, "{\"error\":" + Json.str(String.valueOf(e)) + "}");
         }
     }
 
@@ -91,9 +90,14 @@ public class Main {
         return sb.append(']').toString();
     }
 
-    private static void send(HttpExchange ex, int status, String json) throws IOException {
-        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        ex.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+    private static void sendJson(HttpExchange ex, int status, String json) throws IOException {
+        send(ex, status, json, "application/json; charset=utf-8");
+    }
+
+    private static void send(HttpExchange ex, int status, String body, String type) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        ex.getResponseHeaders().set("Content-Type", type);
+        ex.getResponseHeaders().set("Cache-Control", "no-store");
         ex.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = ex.getResponseBody()) { os.write(bytes); }
     }

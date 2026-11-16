@@ -704,3 +704,19 @@ main.no-code { grid-template-columns: 1fr; }
 
 /* show code exactly as typed: no <= -> ≤ ligatures anywhere */
 .memory, .output pre, .predict-code, .tree-svg, .stdin textarea { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+
+/* "Update available" badge in the header */
+.update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 99px;
+  color: var(--green);
+  background: var(--green-soft);
+  border: 1px solid rgba(74, 222, 155, 0.35);
+  text-decoration: none;
+}
+.update-chip:hover { filter: brightness(1.15); }

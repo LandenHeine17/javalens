@@ -6,7 +6,7 @@ import Growth from './Growth';
 import Timeline from './Timeline';
 import {
   AArrowDown, AArrowUp, BookOpen, Bug, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers, Lightbulb,
-  LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, Presentation, Sun, Terminal, TrendingUp, TriangleAlert,
+  LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, Presentation, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
 } from 'lucide-react';
 import { indexVariableNames, lineCounts } from './analysis';
 import { defaultSample, samples } from './samples';
@@ -69,6 +69,15 @@ export default function App() {
   const [predict, setPredict] = useState(false);
   const [awaitingReveal, setAwaitingReveal] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const [appVersion, setAppVersion] = useState<{ version: string; latest: string | null; url: string | null } | null>(null);
+
+  // Version + "update available" (the server asks GitHub Releases; see AppInfo.java).
+  useEffect(() => {
+    fetch('/version')
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setAppVersion)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => save('fontSize', fontSize), [fontSize]);
   useEffect(() => save('tab', tab), [tab]);
@@ -129,7 +138,7 @@ export default function App() {
       }
     } catch (e) {
       if ((e as Error).name === 'AbortError') return;
-      setStatus({ kind: 'error', text: 'Cannot reach the Java server. Is it running? (java server/src/Main.java)' });
+      setStatus({ kind: 'error', text: 'Cannot reach the Java server. Is it running? (./gradlew run)' });
     }
   }, []);
 
@@ -188,7 +197,7 @@ export default function App() {
   return (
     <div className={'app' + (presenting ? ' presenting' : '')} style={{ ['--fs' as string]: `${fontSize}px` }}>
       <header>
-        <div className="brand">
+        <div className="brand" title={appVersion ? `JavaLens ${appVersion.version}` : 'JavaLens'}>
           <span className="logo-mark" aria-hidden>
             <Layers size={16} strokeWidth={2.4} />
           </span>
@@ -263,6 +272,12 @@ export default function App() {
             {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
           </button>
         </div>
+
+        {appVersion?.latest && appVersion.url && (
+          <a className="update-chip" href={appVersion.url} target="_blank" rel="noreferrer" title="Download the new version">
+            <Sparkles size={14} /> Update {appVersion.latest}
+          </a>
+        )}
 
         {status.kind !== 'idle' && (
           <div className={`status ${status.kind}`} title={status.text}>

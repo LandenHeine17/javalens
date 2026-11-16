@@ -22,14 +22,14 @@ function watchSamples(): Plugin {
   };
 }
 
-// During development, requests to /run and /count are forwarded to the Java server.
+// During development, API requests are forwarded to the Java server (./gradlew run).
 export default defineConfig({
   plugins: [react(), watchSamples()],
   server: {
     port: 5173,
     // every server endpoint lives on the Java server
     proxy: Object.fromEntries(
-      ['/run', '/count', '/complete', '/hover', '/signature'].map((p) => [p, 'http://127.0.0.1:7070']),
+      ['/run', '/count', '/complete', '/hover', '/signature', '/version', '/ping'].map((p) => [p, 'http://127.0.0.1:7070']),
     ),
     fs: { allow: ['..'] }, // lets the app import the shared ../samples folder
   },

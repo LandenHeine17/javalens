@@ -1,3 +1,5 @@
+package javalens;
+
 import javax.tools.*;
 import java.io.IOException;
 import java.net.URLClassLoader;

@@ -1,0 +1,99 @@
+# Builds JavaLens for Windows, macOS and Linux and publishes a GitHub Release.
+#
+# To release:   git tag v1.1.0 && git push origin v1.1.0
+# To test the build without releasing: Actions tab -> Release -> "Run workflow" (files appear as artifacts).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Work out the version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=$(grep '^version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Test
+        run: ./gradlew test
+
+      # Windows installers (.msi) need the WiX toolset.
+      - name: Install WiX (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.Util.wixext/5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+
+      # updateRepo makes the built app check THIS repo's Releases page for updates.
+      - name: Build portable app
+        run: ./gradlew portable -Pversion="$VERSION" -PupdateRepo="${{ github.repository }}"
+
+      - name: Build installer
+        # If the installer step ever breaks on one OS, the portable build is still published.
+        continue-on-error: true
+        run: ./gradlew installer -Pversion="$VERSION" -PupdateRepo="${{ github.repository }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: javalens-${{ runner.os }}
+          path: build/dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## Download
+
+            | Your computer | Installer | No-install version |
+            |---|---|---|
+            | Windows | `JavaLens-*.msi` | `JavaLens-*-windows-portable.zip` |
+            | macOS (Apple Silicon) | `JavaLens-*.dmg` | `JavaLens-*-macos-portable.zip` |
+            | Linux | `javalens_*.deb` | `JavaLens-*-linux-portable.tar.gz` |
+
+            Java is included; nothing else to install.
+
+            **First launch:** the app isn't code-signed, so:
+            - **Windows:** "Windows protected your PC" → *More info* → *Run anyway*
+            - **macOS:** right-click JavaLens → *Open* → *Open* (only the first time)

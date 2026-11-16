@@ -3,3 +3,5 @@ dist/
 .DS_Store
 *.class
 *.tsbuildinfo
+.gradle/
+build/

@@ -1,3 +1,5 @@
+package javalens;
+
 import com.sun.jdi.*;
 import com.sun.jdi.connect.Connector;
 import com.sun.jdi.connect.LaunchingConnector;
@@ -27,6 +29,13 @@ public final class Tracer {
     // "Count mode" (used by the Big-O growth chart): no snapshots, just count executed lines, fast.
     public static final int COUNT_MAX_STEPS = 2_000_000;
     public static final long COUNT_TIMEOUT_MS = 4000;
+
+    /** Every student program currently running, so quitting the app can stop them all. */
+    private static final Set<Process> LIVE = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    public static void stopAll() {
+        for (Process p : LIVE) p.destroyForcibly();
+    }
 
     private final Compiler.Result compiled;
     private final String stdin;
@@ -64,9 +73,11 @@ public final class Tracer {
         LaunchingConnector conn = Bootstrap.virtualMachineManager().defaultConnector();
         Map<String, Connector.Argument> args = conn.defaultArguments();
         args.get("main").setValue(compiled.mainClass());
-        args.get("options").setValue("-cp " + compiled.dir() + " -Xss2m -XX:TieredStopAtLevel=1 -Xshare:auto");
+        // Quoted: the temp folder can contain spaces (e.g. a Windows user name like "Jo Smith").
+        args.get("options").setValue("-cp \"" + compiled.dir() + "\" -Xss2m -XX:TieredStopAtLevel=1 -Xshare:auto");
         VirtualMachine vm = conn.launch(args);
         Process proc = vm.process();
+        LIVE.add(proc);
 
         try (OutputStream in = proc.getOutputStream()) {
             in.write(stdin.getBytes(StandardCharsets.UTF_8));
@@ -147,6 +158,7 @@ public final class Tracer {
                 try { vm.exit(1); } catch (Exception ignored) { }
             }
             proc.destroyForcibly();
+            LIVE.remove(proc);
         }
 
         // Collect whatever output is left.

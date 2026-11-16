@@ -2,20 +2,60 @@
 
 A live Java environment for teaching. Type Java on the left. On the right you see the program run step by step: the call stack (recursion frames pushing and popping, with return values), objects on the heap with arrows for references, and the program's output.
 
-## Run it
+## Install it
 
-Requirements: JDK 21+ (25 recommended) and Node 18+.
+Download the installer for your computer from the project's **Releases** page. Java is included, so there's nothing else to install.
+
+| OS | Installer | No-install version |
+|---|---|---|
+| Windows | `.msi` | `-windows-portable.zip` |
+| macOS (Apple Silicon) | `.dmg` | `-macos-portable.zip` |
+| Linux | `.deb` (`.rpm` when built on Fedora) | `-linux-portable.tar.gz` |
+
+When you launch it, JavaLens opens in your browser and shows a small window with **Open** and **Quit**. Closing that window quits JavaLens. Launching it a second time just reopens the browser.
+
+The app isn't code-signed, so the first launch shows a warning:
+- **Windows:** *More info* → *Run anyway*
+- **macOS:** right-click → *Open*
+
+## Develop it
+
+Requirements: JDK 25 and Node 18+. Gradle downloads itself through `./gradlew`.
 
 ```bash
-./start.sh            # starts both servers and opens http://localhost:5173
+./start.sh     # Java server (./gradlew run, port 7070) + Vite dev server, opens http://localhost:5173
 ```
 
-Or start them separately:
+Edits to `web/src` reload instantly. After editing Java code, restart `./gradlew run`.
+
+| Command | What it does |
+|---|---|
+| `./gradlew test` | Runs the test suite: every sample program, the edge cases, and autocomplete. |
+| `./gradlew jar` | Builds `build/libs/javalens.jar`, one file with the web page inside. Run it with `java -jar` if a JDK is installed. |
+| `./gradlew portable` | Builds the unzip-and-run app for this OS, with Java bundled, into `build/dist`. |
+| `./gradlew installer` | Builds the native installer for this OS (`.msi`, `.dmg`, `.deb` or `.rpm`) into `build/dist`. |
+
+Packaging uses Eclipse Temurin 25, which Gradle downloads automatically if it isn't installed. Some Linux distributions' JDKs, Fedora's included, can't build the trimmed runtime with `jlink`.
+
+### Releasing
+
+Push a version tag. GitHub Actions then builds the Windows, macOS and Linux versions and publishes them on a Release page (see `.github/workflows/release.yml`):
 
 ```bash
-java server/src/Main.java        # Java tracing server on 127.0.0.1:7070
-cd web && npm install && npm run dev
+git tag v1.1.0
+git push origin v1.1.0
 ```
+
+Release builds check that repo's Releases page and show an **Update available** badge in the header when there's a newer version. Local builds skip the check unless `updateRepo` is set in `gradle.properties`.
+
+### Project layout
+
+| Folder | Contents |
+|---|---|
+| `server/src/main/java/javalens/` | The Java side: HTTP API, compiler, tracer, autocomplete, app window |
+| `server/src/test/java/javalens/` | Tests |
+| `web/` | The page: React + Monaco editor, built with Vite |
+| `samples/` | Lesson programs. They appear in the Examples menu and are also run by the tests. |
 
 ## Using it in lecture
 
@@ -51,8 +91,8 @@ cd web && npm install && npm run dev
 
 ## How it works
 
-1. `server/src/Compiler.java` compiles the code in memory with the JDK's own compiler, which takes about 30ms.
-2. `server/src/Tracer.java` launches the program in a separate JVM under the Java Debug Interface. It records the stack, variables, heap objects and output after every line, then returns the whole recording (a "trace") as JSON.
+1. `server/src/main/java/javalens/Compiler.java` compiles the code in memory with the JDK's own compiler, which takes about 30ms.
+2. `server/src/main/java/javalens/Tracer.java` launches the program in a separate JVM under the Java Debug Interface. It records the stack, variables, heap objects and output after every line, then returns the whole recording (a "trace") as JSON.
 3. The web UI in `web/src/` replays the trace. Stepping backwards is instant because nothing re-runs.
 
 The tracer has these safety limits:
@@ -70,7 +110,7 @@ The server listens only on `127.0.0.1` because it runs whatever code it is given
 
 ### Editor help (autocomplete, hover, parameter hints)
 
-`server/src/Assist.java` answers `/complete`, `/hover` and `/signature` using the JDK's own compiler, so there is nothing extra to install. It replaces the word at the cursor with a placeholder, lets javac type-check the file, then asks javac what fits at the placeholder. A request takes about 20–90ms.
+`server/src/main/java/javalens/Assist.java` answers `/complete`, `/hover` and `/signature` using the JDK's own compiler, so there is nothing extra to install. It replaces the word at the cursor with a placeholder, lets javac type-check the file, then asks javac what fits at the placeholder. A request takes about 20–90ms.
 
 - **Type-aware completion:**
   - After `name.` it offers members of `name`'s type, with generic types filled in (`list.get` on an `ArrayList<String>` returns `String`).
