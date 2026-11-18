@@ -1,0 +1,81 @@
+{
+  "name": "javalens",
+  "displayName": "JavaLens",
+  "description": "See your Java program run step by step: the call stack, objects on the heap, memory addresses and Big-O growth, beside your code.",
+  "version": "1.2.0",
+  "publisher": "javalens",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LandenHeine17/javalens.git"
+  },
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Education",
+    "Visualization",
+    "Debuggers"
+  ],
+  "keywords": [
+    "java",
+    "visualizer",
+    "teaching",
+    "memory",
+    "recursion"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "javalens.visualize",
+        "title": "Visualize",
+        "category": "JavaLens",
+        "icon": "$(eye)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "javalens.visualize",
+          "when": "resourceLangId == java",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "javalens.visualize",
+          "when": "editorLangId == java"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "JavaLens",
+      "properties": {
+        "javalens.javaHome": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder of the **JDK 25** (or newer) JavaLens uses, e.g. `/usr/lib/jvm/java-25-openjdk`. Leave empty to use `JAVA_HOME` or the `java` on your PATH."
+        },
+        "javalens.showCompileErrors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Underline compile errors that JavaLens finds in the file it is visualizing."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "tsc -p .",
+    "compile": "tsc -p .",
+    "package": "vsce package --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.6",
+    "@types/vscode": "1.85.0",
+    "@vscode/vsce": "3.2.1",
+    "typescript": "5.6.3"
+  }
+}

@@ -27,24 +27,27 @@ public final class Main {
     private static final int DEFAULT_PORT = 7070;
 
     public static void main(String[] args) throws IOException {
-        boolean dev = false, browser = true, headless = GraphicsEnvironment.isHeadless();
+        boolean dev = false, embedded = false, browser = true, headless = GraphicsEnvironment.isHeadless();
         Integer port = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--dev" -> dev = true;
+                // Started by the VS Code extension: a private server on any free port, no window, no browser.
+                case "--embedded" -> embedded = true;
                 case "--no-browser" -> browser = false;
                 case "--headless" -> headless = true;
                 case "--port" -> port = Integer.parseInt(args[++i]);
                 default -> System.err.println("Unknown option: " + args[i]);
             }
         }
-        if (dev) {
+        if (embedded && port == null) port = 0; // any free port; the extension reads it from our output
+        if (dev || embedded) {
             browser = false;
             headless = true;
         }
 
         // Already running? Then just bring it up in the browser instead of starting a second copy.
-        if (!dev) {
+        if (!dev && !embedded) {
             int running = Instance.findRunning();
             if (running > 0) {
                 if (browser) openBrowser("http://127.0.0.1:" + running + "/");
@@ -62,10 +65,11 @@ public final class Main {
         server.start();
 
         String url = "http://127.0.0.1:" + actualPort + "/";
-        if (!dev) Instance.register(actualPort);
+        boolean registered = !dev && !embedded; // only the desktop app is "the" running JavaLens
+        if (registered) Instance.register(actualPort);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             Tracer.stopAll(); // don't leave a student's infinite loop running after we quit
-            Instance.unregister(actualPort);
+            if (registered) Instance.unregister(actualPort);
             server.stop(0);
         }));
 

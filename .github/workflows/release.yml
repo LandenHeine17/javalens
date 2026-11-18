@@ -61,6 +61,11 @@ jobs:
         continue-on-error: true
         run: ./gradlew installer -Pversion="$VERSION" -PupdateRepo="${{ github.repository }}"
 
+      # One VS Code extension for every OS (it uses the user's own JDK), so build it once.
+      - name: Build VS Code extension
+        if: runner.os == 'Linux'
+        run: ./gradlew vscodeExtension -Pversion="$VERSION" -PupdateRepo="${{ github.repository }}"
+
       - uses: actions/upload-artifact@v4
         with:
           name: javalens-${{ runner.os }}
@@ -93,6 +98,9 @@ jobs:
             | Linux | `javalens_*.deb` | `JavaLens-*-linux-portable.tar.gz` |
 
             Java is included; nothing else to install.
+
+            **VS Code extension:** download `javalens-*.vsix`, then in VS Code run *Extensions: Install from VSIX...* and pick it.
+            Open a `.java` file and click the eye button in the editor's title bar. The extension needs a **JDK 25** installed.
 
             **First launch:** the app isn't code-signed, so:
             - **Windows:** "Windows protected your PC" → *More info* → *Run anyway*

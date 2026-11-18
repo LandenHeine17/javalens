@@ -12,6 +12,8 @@ Download the installer for your computer from the project's **Releases** page. J
 | macOS (Apple Silicon) | `.dmg` | `-macos-portable.zip` |
 | Linux | `.deb` (`.rpm` when built on Fedora) | `-linux-portable.tar.gz` |
 
+**VS Code:** download `javalens-x.y.z.vsix` from the same Releases page and install it with *Extensions: Install from VSIX...*. Open a `.java` file and click the eye button in the editor's title bar: the visualizer opens beside your code, highlights the line being run, and re-runs as you type. The extension needs a JDK 25 installed (it looks at the `javalens.javaHome` setting, then `JAVA_HOME`, then the `java` on your PATH).
+
 When you launch it, JavaLens opens in your browser and shows a small window with **Open** and **Quit**. Closing that window quits JavaLens. Launching it a second time just reopens the browser.
 
 The app isn't code-signed, so the first launch shows a warning:
@@ -33,6 +35,7 @@ Edits to `web/src` reload instantly. After editing Java code, restart `./gradlew
 | `./gradlew test` | Runs the test suite: every sample program, the edge cases, and autocomplete. |
 | `./gradlew jar` | Builds `build/libs/javalens.jar`, one file with the web page inside. Run it with `java -jar` if a JDK is installed. |
 | `./gradlew portable` | Builds the unzip-and-run app for this OS, with Java bundled, into `build/dist`. |
+| `./gradlew vscodeExtension` | Builds the VS Code extension into `build/dist/javalens-<version>.vsix` (the server jar goes inside; the extension's code is in `vscode/`). |
 | `./gradlew installer` | Builds the native installer for this OS (`.msi`, `.dmg`, `.deb` or `.rpm`) into `build/dist`. |
 
 Packaging uses Eclipse Temurin 25, which Gradle downloads automatically if it isn't installed. Some Linux distributions' JDKs, Fedora's included, can't build the trimmed runtime with `jlink`.
@@ -55,6 +58,7 @@ Release builds check that repo's Releases page and show an **Update available** 
 | `server/src/main/java/javalens/` | The Java side: HTTP API, compiler, tracer, autocomplete, app window |
 | `server/src/test/java/javalens/` | Tests |
 | `web/` | The page: React + Monaco editor, built with Vite |
+| `vscode/` | The VS Code extension: starts the server with the user's JDK and shows the page in a panel |
 | `samples/` | Lesson programs. They appear in the Examples menu and are also run by the tests. |
 
 ## Using it in lecture

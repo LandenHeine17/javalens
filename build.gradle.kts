@@ -8,6 +8,7 @@ import org.gradle.api.tasks.testing.logging.TestExceptionFormat
  *   ./gradlew jar          build/libs/javalens.jar  (needs a JDK to run: java -jar javalens.jar)
  *   ./gradlew installer    native installer for this OS in build/dist  (msi / dmg / deb / rpm)
  *   ./gradlew portable     unzip-and-run version for this OS in build/dist
+ *   ./gradlew vscodeExtension   VS Code extension (.vsix) in build/dist  (uses the JDK the user has)
  */
 
 plugins {
@@ -248,4 +249,39 @@ tasks.register<Tar>("portableTar") {
     compression = Compression.GZIP
     archiveFileName = "$portableName.tar.gz"
     destinationDirectory = layout.buildDirectory.dir("dist")
+}
+
+// ---------------------------------------------------------------- VS Code extension (vscode/)
+// The extension runs javalens.jar with the user's own JDK 25, so one .vsix works on every OS.
+
+val vscodeNpmInstall = tasks.register<Exec>("vscodeNpmInstall") {
+    description = "Installs the VS Code extension's build tools"
+    workingDir = file("vscode")
+    commandLine(npm, "ci", "--no-audit", "--no-fund")
+    inputs.file("vscode/package-lock.json")
+    outputs.file("vscode/node_modules/.package-lock.json")
+}
+
+val vscodeExtension = tasks.register<Exec>("vscodeExtension") {
+    description = "Builds the VS Code extension into build/dist/javalens-<version>.vsix"
+    group = "distribution"
+    dependsOn(tasks.jar, vscodeNpmInstall, icons)
+    val ver = project.version.toString()
+    val vsix = layout.buildDirectory.file("dist/javalens-$ver.vsix")
+    inputs.dir("vscode/src")
+    inputs.files("vscode/package.json", "vscode/README.md", "vscode/tsconfig.json", "vscode/.vscodeignore")
+    inputs.file(tasks.jar.flatMap { it.archiveFile })
+    inputs.property("version", ver)
+    outputs.file(vsix)
+    workingDir = file("vscode")
+    doFirst {
+        // The server and icon ship inside the extension; the version follows the app's.
+        copy { from(tasks.jar.flatMap { it.archiveFile }); into("vscode/server") }
+        copy { from(layout.buildDirectory.file("icons/icon.png")); into("vscode") }
+        vsix.get().asFile.parentFile.mkdirs()
+    }
+    commandLine(
+        if (isWindows) "npx.cmd" else "npx", "--no-install", "@vscode/vsce", "package",
+        "--skip-license", "--no-update-package-json", ver, "-o", vsix.get().asFile.absolutePath,
+    )
 }

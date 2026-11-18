@@ -22,6 +22,17 @@ const END_MESSAGES: Record<EndReason, string | null> = {
   too_deep: 'Recursion went more than 150 calls deep. Is the base case missing?',
 };
 
+/**
+ * VS Code mode (?host=vscode): the page runs inside the JavaLens VS Code extension's panel.
+ * The program is edited in VS Code's own editor, so ours is hidden; the extension sends the code
+ * in and we send the current line and compile errors back (see vscode/src/extension.ts).
+ */
+const params = new URLSearchParams(location.search);
+const IN_VSCODE = params.get('host') === 'vscode';
+const toHost = (msg: unknown) => {
+  if (IN_VSCODE) window.parent.postMessage(msg, '*');
+};
+
 type Status = { kind: 'idle' | 'running' | 'ok' | 'compile' | 'error'; text: string };
 type Tab = 'memory' | 'map' | 'space' | 'tree' | 'growth';
 
@@ -43,6 +54,7 @@ function save(key: string, value: unknown) {
 
 export default function App() {
   const [code, setCode] = useState(() => {
+    if (IN_VSCODE) return ''; // VS Code sends the file
     try {
       return localStorage.getItem('javalens.code') || defaultSample.code;
     } catch {
@@ -64,11 +76,11 @@ export default function App() {
   const [fontSize, setFontSize] = useState(() => load('fontSize', 16));
   const [tab, setTab] = useState<Tab>(() => load('tab', 'memory'));
   const [showCounts, setShowCounts] = useState(() => load('counts', false));
-  const [showCode, setShowCode] = useState(true);
+  const [showCode, setShowCode] = useState(!IN_VSCODE);
   const [presenting, setPresenting] = useState(false);
   // Light theme reads better on most projectors; first visit follows the computer's setting.
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
-    load('theme', window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
+    params.get('theme') === 'light' ? 'light' : params.get('theme') === 'dark' ? 'dark' : load('theme', window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
   );
   const [predict, setPredict] = useState(false);
   const [awaitingReveal, setAwaitingReveal] = useState(false);
@@ -112,6 +124,7 @@ export default function App() {
   }, []);
 
   const run = useCallback(async (source: string, input: string) => {
+    if (!source.trim()) return; // nothing to run yet (VS Code mode before the file arrives)
     abortRef.current?.abort(); // cancel an older run that is still in flight
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -143,12 +156,13 @@ export default function App() {
       }
     } catch (e) {
       if ((e as Error).name === 'AbortError') return;
-      setStatus({ kind: 'error', text: 'Cannot reach the Java server. Is it running? (./gradlew run)' });
+      setStatus({ kind: 'error', text: IN_VSCODE ? 'Cannot reach the JavaLens server. Close this panel and run JavaLens: Visualize again.' : 'Cannot reach the Java server. Is it running? (./gradlew run)' });
     }
   }, []);
 
   // Remember the code so a page refresh mid-lecture doesn't lose it.
   useEffect(() => {
+    if (IN_VSCODE) return; // the file lives in VS Code
     try {
       localStorage.setItem('javalens.code', code);
     } catch {
@@ -191,12 +205,39 @@ export default function App() {
     setFontSize((f) => (presenting ? Math.max(12, f - 6) : Math.min(32, f + 6)));
   };
 
+  // ---- VS Code mode: code and theme come in; the current line and compile errors go out.
+  useEffect(() => {
+    if (!IN_VSCODE) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== window.parent) return;
+      const msg = e.data as { type?: string; code?: string; theme?: string };
+      if (msg.type === 'code' && typeof msg.code === 'string') setCode(msg.code);
+      if (msg.type === 'theme' && (msg.theme === 'dark' || msg.theme === 'light')) setTheme(msg.theme);
+    };
+    window.addEventListener('message', onMessage);
+    toHost({ type: 'ready' });
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+  const currentLine = steps[index]?.line ?? null;
+  const currentKind = steps[index]?.kind ?? null;
+  useEffect(() => toHost({ type: 'line', line: currentLine, kind: currentKind }), [currentLine, currentKind]);
+  useEffect(() => toHost({ type: 'diagnostics', diagnostics }), [diagnostics]);
+
   const indexNames = useMemo(() => indexVariableNames(code), [code]);
   const layout = useMemo(() => buildLayout(steps, codeSeg), [steps, codeSeg]);
   const counts = useMemo(() => (showCounts ? lineCounts(steps, index) : null), [showCounts, steps, index]);
   const step = steps[index];
   const output = step ? stdout.slice(0, step.out) : '';
   const atEnd = index === steps.length - 1;
+
+  const stdinPanel = (
+    <div className="stdin">
+      <div className="panel-title">
+        <Keyboard size={13} /> Program input <span className="muted">(what the user would type)</span>
+      </div>
+      <textarea value={stdin} onChange={(e) => setStdin(e.target.value)} placeholder="e.g. 5" spellCheck={false} />
+    </div>
+  );
 
   const StatusIcon = status.kind === 'running' ? LoaderCircle : status.kind === 'ok' ? CircleCheck : status.kind === 'idle' ? null : CircleAlert;
 
@@ -210,6 +251,7 @@ export default function App() {
           Java<span>Lens</span>
         </div>
 
+        {!IN_VSCODE && (
         <label className="select-wrap" title="Load an example program">
           <BookOpen size={15} />
           <select onChange={(e) => loadSample(e.target.value)} value="">
@@ -222,6 +264,7 @@ export default function App() {
           </select>
           <ChevronDown size={14} className="select-caret" />
         </label>
+        )}
 
         <div className="group">
           <button className="btn primary" onClick={() => run(code, stdin)} title="Run the program now">
@@ -258,9 +301,11 @@ export default function App() {
         </div>
 
         <div className="segmented" role="group" aria-label="Layout">
-          <button onClick={() => setShowCode(!showCode)} className={!showCode ? 'on' : ''} title={showCode ? 'Hide the code to give the diagram the whole screen' : 'Show the code'}>
-            {showCode ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />} <span className="lbl">Code</span>
-          </button>
+          {!IN_VSCODE && (
+            <button onClick={() => setShowCode(!showCode)} className={!showCode ? 'on' : ''} title={showCode ? 'Hide the code to give the diagram the whole screen' : 'Show the code'}>
+              {showCode ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />} <span className="lbl">Code</span>
+            </button>
+          )}
           <button onClick={togglePresent} className={presenting ? 'on' : ''} title="Bigger text for the projector">
             <Presentation size={15} /> <span className="lbl">Present</span>
           </button>
@@ -279,7 +324,7 @@ export default function App() {
           </button>
         </div>
 
-        {appVersion?.latest && appVersion.url && (
+        {!IN_VSCODE && appVersion?.latest && appVersion.url && (
           <a className="update-chip" href={appVersion.url} target="_blank" rel="noreferrer" title="Download the new version">
             <Sparkles size={14} /> Update {appVersion.latest}
           </a>
@@ -308,14 +353,7 @@ export default function App() {
                 theme={theme}
               />
             </div>
-            {showStdin && (
-              <div className="stdin">
-                <div className="panel-title">
-                  <Keyboard size={13} /> Program input <span className="muted">(what the user would type)</span>
-                </div>
-                <textarea value={stdin} onChange={(e) => setStdin(e.target.value)} placeholder="e.g. 5" spellCheck={false} />
-              </div>
-            )}
+            {showStdin && stdinPanel}
           </section>
         )}
 
@@ -380,6 +418,7 @@ export default function App() {
               </div>
             )}
           </div>
+          {!showCode && showStdin && stdinPanel}
           {tab !== 'growth' && (
             <div className="output">
               <div className="panel-title">
