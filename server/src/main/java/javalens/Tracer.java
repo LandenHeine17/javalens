@@ -53,6 +53,13 @@ public final class Tracer {
     private boolean topFramePopped = false;
     private long nextFrameId = 1;
 
+    // Memory-map extras: the String objects that live in the string pool, and the user classes to read statics from.
+    private final Set<Long> pooledIds = new HashSet<>();
+    private final Map<String, ClassType> userTypes = new LinkedHashMap<>();
+    private final List<String> codeJson = new ArrayList<>(); // one entry per loaded user class: its methods
+
+    private VirtualMachine vm;
+
     private Tracer(Compiler.Result compiled, String stdin, boolean countOnly) {
         this.compiled = compiled;
         this.stdin = stdin == null ? "" : stdin;
@@ -76,6 +83,7 @@ public final class Tracer {
         // Quoted: the temp folder can contain spaces (e.g. a Windows user name like "Jo Smith").
         args.get("options").setValue("-cp \"" + compiled.dir() + "\" -Xss2m -XX:TieredStopAtLevel=1 -Xshare:auto");
         VirtualMachine vm = conn.launch(args);
+        this.vm = vm;
         Process proc = vm.process();
         LIVE.add(proc);
 
@@ -117,6 +125,7 @@ public final class Tracer {
                         tracing = true;
                         ThreadReference t = be.thread();
                         erm.deleteEventRequests(erm.breakpointRequests());
+                        if (!countOnly) internLiterals(t); // before stepping starts, so no step events come from it
 
                         StepRequest step = erm.createStepRequest(t, StepRequest.STEP_LINE, StepRequest.STEP_INTO);
                         for (String ex : EXCLUDED) step.addClassExclusionFilter(ex);
@@ -177,6 +186,7 @@ public final class Tracer {
         json.append("{\"ok\":true,\"end\":").append(Json.str(endReason))
             .append(",\"maxSteps\":").append(MAX_STEPS)
             .append(",\"stdout\":").append(Json.str(stdout.toString()))
+            .append(",\"code\":[").append(String.join(",", codeJson)).append(']')
             .append(",\"steps\":[").append(String.join(",", steps)).append("]}");
         return json.toString();
     }
@@ -246,8 +256,11 @@ public final class Tracer {
                     if (!first) sb.append(',');
                     first = false;
                     sb.append("{\"name\":").append(Json.str(lv.name()))
-                      .append(",\"type\":").append(Json.str(simpleName(lv.typeName())))
-                      .append(",\"v\":").append(value(f.getValue(lv), toVisit)).append('}');
+                      .append(",\"type\":").append(Json.str(simpleName(lv.typeName())));
+                    if (compiled.finalLocals().contains(simpleName(m.declaringType().name()) + "." + m.name() + "." + lv.name())) {
+                        sb.append(",\"final\":true");
+                    }
+                    sb.append(",\"v\":").append(value(f.getValue(lv), toVisit)).append('}');
                 }
             } catch (AbsentInformationException ignored) { }
             sb.append(']');
@@ -264,6 +277,9 @@ public final class Tracer {
             if (detail instanceof StringReference s) msg += ": " + s.value();
             sb.append(",\"exception\":").append(Json.str(msg));
         }
+
+        String statics = statics(toVisit);
+        if (!statics.isEmpty()) sb.append(",\"statics\":[").append(statics).append(']');
 
         sb.append(",\"heap\":{").append(heap(toVisit)).append("}}");
         steps.add(sb.toString());
@@ -294,7 +310,10 @@ public final class Tracer {
     /** Encodes a value; objects become references ("r") that are described in the heap section. */
     private String value(Value v, Map<Long, ObjectReference> toVisit) {
         if (v == null) return "{\"k\":\"null\"}";
-        if (v instanceof StringReference s) return "{\"k\":\"s\",\"v\":" + Json.str(s.value()) + "}";
+        if (v instanceof StringReference s) {
+            return "{\"k\":\"s\",\"v\":" + Json.str(s.value()) + ",\"id\":" + s.uniqueID()
+                    + (pooledIds.contains(s.uniqueID()) ? ",\"pool\":true" : "") + "}";
+        }
         if (v instanceof CharValue c) return "{\"k\":\"p\",\"v\":" + Json.str("'" + c.value() + "'") + "}";
         if (v instanceof PrimitiveValue p) return "{\"k\":\"p\",\"v\":" + Json.str(p.toString()) + "}";
         if (v instanceof ObjectReference o) {
@@ -352,12 +371,91 @@ public final class Tracer {
                 if (!first) sb.append(',');
                 first = false;
                 sb.append("{\"name\":").append(Json.str(f.name()))
-                  .append(",\"type\":").append(Json.str(simpleName(f.typeName())))
-                  .append(",\"v\":").append(value(o.getValue(f), next)).append('}');
+                  .append(",\"type\":").append(Json.str(simpleName(f.typeName())));
+                if (f.isFinal()) sb.append(",\"final\":true");
+                sb.append(",\"v\":").append(value(o.getValue(f), next)).append('}');
             }
             return sb.append("]}").toString();
         } catch (ObjectCollectedException ex) {
             return "{\"kind\":\"opaque\",\"type\":" + Json.str(type) + "}";
+        }
+    }
+
+    // ---------------------------------------------------------------- static fields + string pool
+
+    /** Static fields of every user class that has been initialized so far, as a JSON array body. */
+    private String statics(Map<Long, ObjectReference> toVisit) {
+        List<String> parts = new ArrayList<>();
+        for (String name : compiled.userClasses()) {
+            ClassType ct = userTypes.get(name);
+            if (ct == null) {
+                for (ReferenceType rt : vm.classesByName(name)) if (rt instanceof ClassType c) ct = c;
+                if (ct == null) continue;
+                userTypes.put(name, ct);
+                codeJson.add(describeCode(ct));
+            }
+            if (!ct.isInitialized()) continue;
+            StringBuilder sb = new StringBuilder();
+            for (Field f : ct.fields()) {
+                if (!f.isStatic() || f.isSynthetic() || f.name().startsWith("$")) continue;
+                if (!sb.isEmpty()) sb.append(',');
+                sb.append("{\"name\":").append(Json.str(f.name()))
+                  .append(",\"type\":").append(Json.str(simpleName(f.typeName())));
+                if (f.isFinal()) sb.append(",\"final\":true");
+                sb.append(",\"v\":").append(value(ct.getValue(f), toVisit)).append('}');
+            }
+            if (sb.isEmpty()) continue;
+            parts.add("{\"cls\":" + Json.str(simpleName(name)) + ",\"fields\":[" + sb + "]}");
+        }
+        return String.join(",", parts);
+    }
+
+    /** A class's methods with their bytecode size, for the "Code" segment of the memory layout. */
+    private static String describeCode(ClassType ct) {
+        StringBuilder sb = new StringBuilder();
+        String cls = simpleName(ct.name());
+        for (Method m : ct.methods()) {
+            if (m.isSynthetic() || m.isBridge() || m.isAbstract() || m.isNative()) continue;
+            int bytes = 0;
+            try { bytes = m.bytecodes().length; } catch (Exception ignored) { }
+            List<String> params = new ArrayList<>();
+            for (String t : m.argumentTypeNames()) params.add(simpleName(t));
+            String args = "(" + String.join(", ", params) + ")";
+            String label;
+            String name;
+            if (m.isStaticInitializer()) { name = "static init"; label = "static { ... }"; }
+            else if (m.isConstructor()) { name = "new " + cls; label = "new " + cls + args; }
+            else { name = m.name(); label = simpleName(m.returnTypeName()) + " " + m.name() + args; }
+            if (!sb.isEmpty()) sb.append(',');
+            sb.append("{\"name\":").append(Json.str(name))
+              .append(",\"sig\":").append(Json.str(label))
+              .append(",\"bytes\":").append(bytes).append('}');
+        }
+        return "{\"cls\":" + Json.str(cls) + ",\"methods\":[" + sb + "]}";
+    }
+
+    /**
+     * Finds the pooled String object for every literal in the source by interning its text now.
+     * This doesn't change the program: a literal always evaluates to exactly this interned object.
+     */
+    private void internLiterals(ThreadReference t) {
+        if (compiled.stringLiterals().isEmpty()) return;
+        try {
+            List<ReferenceType> types = vm.classesByName("java.lang.String");
+            if (types.isEmpty() || !(types.get(0) instanceof ClassType stringType)) return;
+            Method intern = stringType.concreteMethodByName("intern", "()Ljava/lang/String;");
+            if (intern == null) return;
+            for (String lit : compiled.stringLiterals()) {
+                try {
+                    StringReference mirror = vm.mirrorOf(lit);
+                    mirror.disableCollection(); // keep it alive until intern() has run
+                    Value canon = mirror.invokeMethod(t, intern, List.of(), ObjectReference.INVOKE_SINGLE_THREADED);
+                    mirror.enableCollection();
+                    if (canon instanceof ObjectReference o) pooledIds.add(o.uniqueID());
+                } catch (ObjectCollectedException ignored) { }
+            }
+        } catch (Exception ignored) {
+            // Memory map just won't mark pooled strings.
         }
     }
 

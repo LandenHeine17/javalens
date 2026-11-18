@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor from './Editor';
 import MemoryView from './MemoryView';
+import MemoryMap from './MemoryMap';
+import AddressSpace from './AddressSpace';
+import { buildLayout } from './memoryLayout';
 import CallTree from './CallTree';
 import Growth from './Growth';
 import Timeline from './Timeline';
 import {
-  AArrowDown, AArrowUp, BookOpen, Bug, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers, Lightbulb,
-  LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, Presentation, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
+  AArrowDown, AArrowUp, Binary, BookOpen, Bug, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers, Lightbulb,
+  LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, Presentation, RectangleVertical, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
 } from 'lucide-react';
 import { indexVariableNames, lineCounts } from './analysis';
 import { defaultSample, samples } from './samples';
-import type { Diagnostic, EndReason, RunResult, Step } from './types';
+import type { CodeClass, Diagnostic, EndReason, RunResult, Step } from './types';
 
 const END_MESSAGES: Record<EndReason, string | null> = {
   finished: null,
@@ -20,7 +23,7 @@ const END_MESSAGES: Record<EndReason, string | null> = {
 };
 
 type Status = { kind: 'idle' | 'running' | 'ok' | 'compile' | 'error'; text: string };
-type Tab = 'memory' | 'tree' | 'growth';
+type Tab = 'memory' | 'map' | 'space' | 'tree' | 'growth';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -50,6 +53,7 @@ export default function App() {
   const [showStdin, setShowStdin] = useState(false);
   const [live, setLive] = useState(true);
   const [steps, setSteps] = useState<Step[]>([]);
+  const [codeSeg, setCodeSeg] = useState<CodeClass[]>([]);
   const [stdout, setStdout] = useState('');
   const [end, setEnd] = useState<EndReason>('finished');
   const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
@@ -121,6 +125,7 @@ export default function App() {
       });
       const data: RunResult = await res.json();
       if (data.ok) {
+        setCodeSeg(data.code ?? []);
         setSteps(data.steps);
         setStdout(data.stdout);
         setEnd(data.end);
@@ -187,6 +192,7 @@ export default function App() {
   };
 
   const indexNames = useMemo(() => indexVariableNames(code), [code]);
+  const layout = useMemo(() => buildLayout(steps, codeSeg), [steps, codeSeg]);
   const counts = useMemo(() => (showCounts ? lineCounts(steps, index) : null), [showCounts, steps, index]);
   const step = steps[index];
   const output = step ? stdout.slice(0, step.out) : '';
@@ -327,12 +333,15 @@ export default function App() {
             {(
               [
                 ['memory', 'Memory', Layers],
+                ['map', 'Memory map', Binary],
+                ['space', 'Memory layout', RectangleVertical],
                 ['tree', 'Call tree', Network],
                 ['growth', 'Growth', TrendingUp],
               ] as [Tab, string, typeof Layers][]
             ).map(([t, label, Icon]) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'tab active' : 'tab'} onClick={() => setTab(t)}>
                 <Icon size={15} /> {label}
+                {t === 'space' && <span className="tab-beta">beta</span>}
               </button>
             ))}
             {!showCode && step && <span className="tab-line">line {step.line}</span>}
@@ -350,6 +359,8 @@ export default function App() {
 
           <div className="view-scroll">
             {tab === 'memory' && <MemoryView step={step} prev={steps[index - 1]} indexNames={indexNames} />}
+            {tab === 'map' && <MemoryMap step={step} prev={steps[index - 1]} layout={layout} />}
+            {tab === 'space' && <AddressSpace steps={steps} step={step} prev={steps[index - 1]} index={index} layout={layout} />}
             {tab === 'tree' && <CallTree steps={steps} index={index} onPick={jumpTo} fontSize={fontSize} />}
             {tab === 'growth' && <Growth code={code} stdin={stdin} />}
             {awaitingReveal && tab !== 'growth' && (

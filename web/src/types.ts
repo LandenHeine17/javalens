@@ -2,14 +2,20 @@
 
 export type Value =
   | { k: 'p'; v: string } // primitive (int, double, boolean, char...)
-  | { k: 's'; v: string } // String
+  | { k: 's'; v: string; id?: number; pool?: boolean } // String (id = the String object; pool = from the string pool)
   | { k: 'null' }
   | { k: 'r'; id: number }; // reference to an object in `heap`
 
 export interface Local {
   name: string;
   type: string;
+  final?: boolean;
   v: Value;
+}
+
+export interface StaticClass {
+  cls: string;
+  fields: { name: string; type: string; final?: boolean; v: Value }[];
 }
 
 export interface Frame {
@@ -26,7 +32,7 @@ export type HeapObj =
   // java.util lists/stacks/queues/sets; `role` says how to draw it
   | { kind: 'list'; role?: 'list' | 'stack' | 'queue' | 'set'; type: string; len: number; items: Value[] }
   | { kind: 'map'; type: string; len: number; entries: { k: Value; v: Value }[] }
-  | { kind: 'object'; type: string; fields: { name: string; type?: string; v: Value }[] }
+  | { kind: 'object'; type: string; fields: { name: string; type?: string; final?: boolean; v: Value }[] }
   | { kind: 'opaque'; type: string };
 
 export interface Step {
@@ -35,6 +41,7 @@ export interface Step {
   out: number; // length of stdout at this step
   stack: Frame[]; // bottom (main) -> top
   heap: Record<string, HeapObj>;
+  statics?: StaticClass[]; // static fields of the user's classes that have been initialized
   exception?: string;
   hiddenFrames?: number;
 }
@@ -47,10 +54,16 @@ export interface Diagnostic {
   severity: 'error' | 'warning';
 }
 
+/** A user class's methods and their bytecode size: the "Code" segment of the memory layout. */
+export interface CodeClass {
+  cls: string;
+  methods: { name: string; sig: string; bytes: number }[];
+}
+
 export type EndReason = 'finished' | 'timeout' | 'step_limit' | 'too_deep';
 
 export type RunResult =
-  | { ok: true; end: EndReason; maxSteps: number; stdout: string; steps: Step[]; diagnostics: Diagnostic[]; ms: number }
+  | { ok: true; end: EndReason; maxSteps: number; stdout: string; steps: Step[]; code?: CodeClass[]; diagnostics: Diagnostic[]; ms: number }
   | { ok: false; error: 'compile'; diagnostics: Diagnostic[] }
   | { ok: false; error: 'server'; message: string };
 

@@ -46,6 +46,7 @@ class TracerTest {
             BinaryTree      | root is 50\\n
             CollectionsDemo | 3 Ana {not=1, be=2, or=1, to=2}\\n
             BigO            | 8 -> 64\\n
+            MemoryModel     | false true true\\n52\\n
             """)
     void everySampleRunsToTheEnd(String name, String expectedStdout) throws Exception {
         String json = trace(sample(name), "");
@@ -62,6 +63,46 @@ class TracerTest {
         }
         // the deepest step has main + 4 factorial frames
         assertTrue(json.contains("\"method\":\"factorial\",\"cls\":\"Factorial\",\"line\":4"));
+    }
+
+    @Test
+    void staticFieldsAppearWithTheirValues() throws Exception {
+        String json = trace(sample("MemoryModel"), "");
+        assertTrue(json.contains("\"statics\":[{\"cls\":\"MemoryModel\",\"fields\":["), json.substring(0, 600));
+        assertTrue(json.contains("{\"name\":\"count\",\"type\":\"int\",\"v\":{\"k\":\"p\",\"v\":\"2\"}}"));
+        assertTrue(json.contains("{\"name\":\"RATE\",\"type\":\"double\",\"final\":true,\"v\":{\"k\":\"p\",\"v\":\"1.5\"}}"));
+    }
+
+    @Test
+    void finalIsReportedForFieldsAndLocals() throws Exception {
+        String json = trace(sample("MemoryModel"), "");
+        assertTrue(json.contains("{\"name\":\"x\",\"type\":\"int\",\"final\":true,"), "final field");
+        assertTrue(json.contains("{\"name\":\"y\",\"type\":\"int\",\"v\""), "non-final field");
+        assertTrue(json.contains("{\"name\":\"size\",\"type\":\"int\",\"final\":true,"), "final local");
+        assertTrue(json.contains("{\"name\":\"w\",\"type\":\"int\",\"final\":true,"), "final parameter");
+        assertTrue(json.contains("{\"name\":\"h\",\"type\":\"int\",\"v\""), "non-final parameter");
+    }
+
+    @Test
+    void stringLiteralsAreMarkedAsPooled() throws Exception {
+        String json = trace(sample("MemoryModel"), "");
+        Matcher a = Pattern.compile("\"name\":\"a\",\"type\":\"String\",\"v\":\\{\"k\":\"s\",\"v\":\"hi\",\"id\":(\\d+),\"pool\":true}").matcher(json);
+        Matcher b = Pattern.compile("\"name\":\"b\",\"type\":\"String\",\"v\":\\{\"k\":\"s\",\"v\":\"hi\",\"id\":(\\d+)}").matcher(json);
+        Matcher c = Pattern.compile("\"name\":\"c\",\"type\":\"String\",\"v\":\\{\"k\":\"s\",\"v\":\"hi\",\"id\":(\\d+),\"pool\":true}").matcher(json);
+        assertTrue(a.find(), "a is pooled");
+        assertTrue(b.find(), "b is a separate, unpooled object");
+        assertTrue(c.find(), "c is pooled");
+        assertEquals(a.group(1), c.group(1));
+        assertNotEquals(a.group(1), b.group(1));
+    }
+
+    @Test
+    void codeSegmentListsMethodsWithBytecodeSizes() throws Exception {
+        String json = trace(sample("MemoryModel"), "");
+        assertTrue(json.contains("\"code\":[{\"cls\":\"MemoryModel\",\"methods\":["), json.substring(0, 300));
+        Matcher m = Pattern.compile("\\{\"name\":\"area\",\"sig\":\"int area\\(int, int\\)\",\"bytes\":(\\d+)}").matcher(json);
+        assertTrue(m.find(), "area() in the code segment");
+        assertTrue(Integer.parseInt(m.group(1)) > 0);
     }
 
     @Test

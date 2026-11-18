@@ -304,7 +304,10 @@ function FrameCard(props: {
             const changed = prevFrame && !same(prevLocals.get(l.name), l.v);
             return (
               <div className={'local' + (changed ? ' changed' : '')} key={l.name}>
-                <span className="var-type">{l.type}</span>
+                <span className="var-type">
+                  {l.final && <span className="badge final">final</span>}
+                  {l.type}
+                </span>
                 <span className="var-name">{l.name}</span>
                 <ValueView v={l.v} ctx={ctx} />
               </div>
@@ -487,6 +490,12 @@ function HeapBox({ id, ctx, downFields, compact }: { id: number; ctx: Ctx; downF
         <div className={compact ? 'fields-compact' : undefined}>
           {obj.fields.map((f) => (
             <div className={'local' + (!isNew && !same(prevFields.get(f.name), f.v) ? ' changed' : '')} key={f.name}>
+              {!compact && (
+                <span className="var-type">
+                  {f.final && <span className="badge final">final</span>}
+                  {f.type}
+                </span>
+              )}
               <span className="var-name">{f.name}</span>
               <ValueView v={f.v} ctx={ctx} down={downFields?.has(f.name)} />
             </div>

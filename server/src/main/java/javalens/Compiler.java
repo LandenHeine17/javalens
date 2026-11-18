@@ -1,5 +1,9 @@
 package javalens;
 
+import com.sun.source.tree.*;
+import com.sun.source.util.*;
+
+import javax.lang.model.element.Modifier;
 import javax.tools.*;
 import java.io.IOException;
 import java.net.URLClassLoader;
@@ -13,7 +17,12 @@ import java.util.stream.Stream;
 public final class Compiler {
     public record Diag(long line, long col, long endCol, String message, String severity) {}
 
-    public record Result(boolean ok, Path dir, String mainClass, Set<String> userClasses, List<Diag> diags) {}
+    /**
+     * finalLocals: "SimpleClass.method.var" for every local/parameter declared final (javac drops
+     * that from the class file, so we read it from the source). stringLiterals: every "..." literal.
+     */
+    public record Result(boolean ok, Path dir, String mainClass, Set<String> userClasses, List<Diag> diags,
+                         Set<String> finalLocals, Set<String> stringLiterals) {}
 
     private static final Pattern PUBLIC_CLASS =
             Pattern.compile("public\\s+(?:(?:final|abstract)\\s+)*(?:class|interface|enum|record)\\s+(\\w+)");
@@ -33,9 +42,17 @@ public final class Compiler {
         JavaCompiler javac = ToolProvider.getSystemJavaCompiler();
         DiagnosticCollector<JavaFileObject> collector = new DiagnosticCollector<>();
         boolean ok;
+        Set<String> finalLocals = new HashSet<>();
+        Set<String> literals = new LinkedHashSet<>();
         try (StandardJavaFileManager fm = javac.getStandardFileManager(collector, null, null)) {
             List<String> options = List.of("-g", "-d", dir.toString(), "-Xlint:none", "-proc:none");
-            ok = javac.getTask(null, fm, collector, options, null, fm.getJavaFileObjects(src)).call();
+            JavacTask task = (JavacTask) javac.getTask(null, fm, collector, options, null, fm.getJavaFileObjects(src));
+            task.addTaskListener(new TaskListener() {
+                @Override public void finished(TaskEvent e) {
+                    if (e.getKind() == TaskEvent.Kind.PARSE) scanSource(e.getCompilationUnit(), finalLocals, literals);
+                }
+            });
+            ok = task.call();
         }
 
         List<Diag> diags = new ArrayList<>();
@@ -46,7 +63,7 @@ public final class Compiler {
             String sev = d.getKind() == Diagnostic.Kind.ERROR ? "error" : "warning";
             diags.add(new Diag(d.getLineNumber(), col, col + len, d.getMessage(Locale.ENGLISH), sev));
         }
-        if (!ok) return new Result(false, dir, null, Set.of(), diags);
+        if (!ok) return new Result(false, dir, null, Set.of(), diags, finalLocals, literals);
 
         Set<String> classes = new LinkedHashSet<>();
         try (Stream<Path> files = Files.list(dir)) {
@@ -58,9 +75,43 @@ public final class Compiler {
         String mainClass = findMainClass(dir, classes, fileName.replace(".java", ""));
         if (mainClass == null) {
             diags.add(new Diag(1, 1, 2, "No main method found. Add: public static void main(String[] args)", "error"));
-            return new Result(false, dir, null, classes, diags);
+            return new Result(false, dir, null, classes, diags, finalLocals, literals);
         }
-        return new Result(true, dir, mainClass, classes, diags);
+        return new Result(true, dir, mainClass, classes, diags, finalLocals, literals);
+    }
+
+    /** Collects final locals/parameters (keyed by enclosing class + method) and string literals. */
+    private static void scanSource(CompilationUnitTree unit, Set<String> finalLocals, Set<String> literals) {
+        if (unit == null) return;
+        new TreeScanner<Void, Void>() {
+            private final Deque<String> classes = new ArrayDeque<>();
+            private String method = null;
+
+            @Override public Void visitClass(ClassTree t, Void v) {
+                String savedMethod = method;
+                classes.push(t.getSimpleName().toString());
+                method = null;
+                try { return super.visitClass(t, v); } finally { classes.pop(); method = savedMethod; }
+            }
+
+            @Override public Void visitMethod(MethodTree t, Void v) {
+                String saved = method;
+                method = t.getName().contentEquals("<init>") ? "<init>" : t.getName().toString();
+                try { return super.visitMethod(t, v); } finally { method = saved; }
+            }
+
+            @Override public Void visitVariable(VariableTree t, Void v) {
+                if (method != null && !classes.isEmpty() && t.getModifiers().getFlags().contains(Modifier.FINAL)) {
+                    finalLocals.add(classes.peek() + "." + method + "." + t.getName());
+                }
+                return super.visitVariable(t, v);
+            }
+
+            @Override public Void visitLiteral(LiteralTree t, Void v) {
+                if (t.getKind() == Tree.Kind.STRING_LITERAL && t.getValue() instanceof String s && literals.size() < 500) literals.add(s);
+                return super.visitLiteral(t, v);
+            }
+        }.scan(unit, null);
     }
 
     /** Load classes WITHOUT initializing them (so no student code runs here) and look for a main method. */
