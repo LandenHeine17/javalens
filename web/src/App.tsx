@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { indexVariableNames, lineCounts } from './analysis';
 import { defaultSample, samples } from './samples';
-import type { CodeClass, Diagnostic, EndReason, RunResult, Step } from './types';
+import type { CodeClass, Diagnostic, EndReason, Project, RunResult, Step } from './types';
 
 const END_MESSAGES: Record<EndReason, string | null> = {
   finished: null,
@@ -32,6 +32,18 @@ const IN_VSCODE = params.get('host') === 'vscode';
 const toHost = (msg: unknown) => {
   if (IN_VSCODE) window.parent.postMessage(msg, '*');
 };
+
+/** Request fields for the program's other files (the server's flat "file.N.path" / "file.N.code" format). */
+export function projectFields(project: Project | null): Record<string, string> {
+  if (!project) return {};
+  const out: Record<string, string> = { mainPath: project.mainPath, fileCount: String(project.files.length) };
+  project.files.forEach((f, i) => {
+    out[`file.${i}.path`] = f.path;
+    out[`file.${i}.code`] = f.code;
+  });
+  return out;
+}
+const baseName = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 
 type Status = { kind: 'idle' | 'running' | 'ok' | 'compile' | 'error'; text: string };
 type Tab = 'memory' | 'map' | 'space' | 'tree' | 'growth';
@@ -62,6 +74,7 @@ export default function App() {
     }
   });
   const [stdin, setStdin] = useState('');
+  const [project, setProject] = useState<Project | null>(null); // other files of the program (VS Code)
   const [showStdin, setShowStdin] = useState(false);
   const [live, setLive] = useState(true);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -123,7 +136,7 @@ export default function App() {
     setIndexRaw(i);
   }, []);
 
-  const run = useCallback(async (source: string, input: string) => {
+  const run = useCallback(async (source: string, input: string, proj: Project | null) => {
     if (!source.trim()) return; // nothing to run yet (VS Code mode before the file arrives)
     abortRef.current?.abort(); // cancel an older run that is still in flight
     const ctrl = new AbortController();
@@ -133,7 +146,7 @@ export default function App() {
       const res = await fetch('/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: source, stdin: input }),
+        body: JSON.stringify({ code: source, stdin: input, ...projectFields(proj) }),
         signal: ctrl.signal,
       });
       const data: RunResult = await res.json();
@@ -173,9 +186,9 @@ export default function App() {
   // Live mode: re-run shortly after typing stops.
   useEffect(() => {
     if (!live) return;
-    const t = setTimeout(() => run(code, stdin), 500);
+    const t = setTimeout(() => run(code, stdin, project), 500);
     return () => clearTimeout(t);
-  }, [code, stdin, live, run]);
+  }, [code, stdin, project, live, run]);
 
   const loadSample = (name: string) => {
     const s = samples.find((x) => x.name === name);
@@ -183,7 +196,8 @@ export default function App() {
     setCode(s.code);
     jumpTo(0);
     setPlaying(false);
-    if (!live) run(s.code, stdin);
+    setProject(null);
+    if (!live) run(s.code, stdin, null);
   };
 
   // Click a line number: jump to the next time that line runs (wrapping around to the start).
@@ -210,8 +224,11 @@ export default function App() {
     if (!IN_VSCODE) return;
     const onMessage = (e: MessageEvent) => {
       if (e.source !== window.parent) return;
-      const msg = e.data as { type?: string; code?: string; theme?: string };
-      if (msg.type === 'code' && typeof msg.code === 'string') setCode(msg.code);
+      const msg = e.data as { type?: string; code?: string; theme?: string; mainPath?: string; files?: Project['files'] };
+      if (msg.type === 'code' && typeof msg.code === 'string') {
+        setCode(msg.code);
+        setProject(msg.mainPath ? { mainPath: msg.mainPath, files: msg.files ?? [] } : null);
+      }
       if (msg.type === 'theme' && (msg.theme === 'dark' || msg.theme === 'light')) setTheme(msg.theme);
     };
     window.addEventListener('message', onMessage);
@@ -220,7 +237,11 @@ export default function App() {
   }, []);
   const currentLine = steps[index]?.line ?? null;
   const currentKind = steps[index]?.kind ?? null;
-  useEffect(() => toHost({ type: 'line', line: currentLine, kind: currentKind }), [currentLine, currentKind]);
+  const currentFile = steps[index]?.file ?? null;
+  useEffect(
+    () => toHost({ type: 'line', line: currentLine, kind: currentKind, file: currentFile }),
+    [currentLine, currentKind, currentFile],
+  );
   useEffect(() => toHost({ type: 'diagnostics', diagnostics }), [diagnostics]);
 
   const indexNames = useMemo(() => indexVariableNames(code), [code]);
@@ -267,7 +288,7 @@ export default function App() {
         )}
 
         <div className="group">
-          <button className="btn primary" onClick={() => run(code, stdin)} title="Run the program now">
+          <button className="btn primary" onClick={() => run(code, stdin, project)} title="Run the program now">
             <Play size={15} fill="currentColor" /> Run
           </button>
           <label className="switch" title="Re-run automatically as you type">
@@ -382,7 +403,11 @@ export default function App() {
                 {t === 'space' && <span className="tab-beta">beta</span>}
               </button>
             ))}
-            {!showCode && step && <span className="tab-line">line {step.line}</span>}
+            {!showCode && step && (
+              <span className="tab-line">
+                {step.file && <b>{baseName(step.file)} · </b>}line {step.line}
+              </span>
+            )}
           </nav>
           {tab !== 'growth' && step?.exception && (
             <div className="banner error">
@@ -400,7 +425,7 @@ export default function App() {
             {tab === 'map' && <MemoryMap step={step} prev={steps[index - 1]} layout={layout} />}
             {tab === 'space' && <AddressSpace steps={steps} step={step} prev={steps[index - 1]} index={index} layout={layout} />}
             {tab === 'tree' && <CallTree steps={steps} index={index} onPick={jumpTo} fontSize={fontSize} />}
-            {tab === 'growth' && <Growth code={code} stdin={stdin} />}
+            {tab === 'growth' && <Growth code={code} stdin={stdin} extra={projectFields(project)} />}
             {awaitingReveal && tab !== 'growth' && (
               <div className="predict-overlay">
                 <div className="predict-card">

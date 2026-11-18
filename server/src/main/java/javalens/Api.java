@@ -6,12 +6,16 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
  * The HTTP endpoints the web page talks to:
  * <pre>
  * POST /run       {"code", "stdin"}        -> trace JSON (a snapshot per executed line)
+ *                 optional, for a multi-file project (VS Code): "mainPath" and "fileCount" N plus
+ *                 "file.0.path", "file.0.code" ... "file.N-1.code" (paths relative to the source root)
  * POST /count     same body                -> {"count": number of lines executed}   (Big-O chart)
  * POST /complete, /hover, /signature  {"code", "line", "col"}  -> editor help
  * GET  /version                            -> {"version", "latest", "url"}          (update badge)
@@ -41,7 +45,7 @@ public final class Api {
             String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             Map<String, String> req = Json.parseFlatObject(body);
             long start = System.nanoTime();
-            compiled = Compiler.compile(req.getOrDefault("code", ""));
+            compiled = Compiler.compile(req.getOrDefault("code", ""), req.get("mainPath"), otherFiles(req));
 
             String diags = diagnosticsJson(compiled);
             if (!compiled.ok()) {
@@ -60,6 +64,18 @@ public final class Api {
         } finally {
             if (compiled != null) Compiler.deleteQuietly(compiled.dir());
         }
+    }
+
+    /** The project's other source files, sent as flat "file.N.path" / "file.N.code" fields. */
+    private static List<Compiler.Source> otherFiles(Map<String, String> req) {
+        List<Compiler.Source> out = new ArrayList<>();
+        int n;
+        try { n = Integer.parseInt(req.getOrDefault("fileCount", "0")); } catch (NumberFormatException e) { n = 0; }
+        for (int i = 0; i < n; i++) {
+            String path = req.get("file." + i + ".path"), code = req.get("file." + i + ".code");
+            if (path != null && code != null) out.add(new Compiler.Source(path, code));
+        }
+        return out;
     }
 
     interface AssistFn { String apply(String code, int line, int col); }
@@ -85,7 +101,9 @@ public final class Api {
             sb.append("{\"line\":").append(d.line()).append(",\"col\":").append(d.col())
               .append(",\"endCol\":").append(d.endCol())
               .append(",\"message\":").append(Json.str(d.message()))
-              .append(",\"severity\":").append(Json.str(d.severity())).append('}');
+              .append(",\"severity\":").append(Json.str(d.severity()));
+            if (d.file() != null) sb.append(",\"file\":").append(Json.str(d.file()));
+            sb.append('}');
         }
         return sb.append(']').toString();
     }

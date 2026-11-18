@@ -23,11 +23,15 @@ interface Props {
 }
 
 const PX_PER_BYTE = 1.25;
-const ROW_MIN = 20;
+const ROW_MIN = 18;
 const ROW_MAX = 84; // big methods/arrays are capped so one block can't swallow the picture
-const HEAD = 22;
+const HEAD = 20;
 const MIN_FREE = 56;
 const MAX_ARRAY_ROWS = 12;
+const RECT_WIDTH = 640; // the rectangle's natural width, including the address ruler and arrow room
+const PANEL_MIN = 240; // the details panel beside it
+const STACK_BELOW = 700; // narrower than this: the panel goes under the rectangle
+const MIN_SCALE = 0.4; // "fit to screen" never shrinks text below this; it scrolls instead
 
 const rowPx = (bytes: number) => Math.min(ROW_MAX, Math.max(ROW_MIN, bytes * PX_PER_BYTE));
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -60,19 +64,35 @@ interface Ctx {
 export default function AddressSpace({ steps, step, prev, index, layout }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const rectRef = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState(640);
+  const [avail, setAvail] = useState({ w: 1000, h: 640 });
+  const [fit, setFit] = useState(() => {
+    try {
+      return localStorage.getItem('javalens.layoutFit') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const toggleFit = (on: boolean) => {
+    setFit(on);
+    try {
+      localStorage.setItem('javalens.layoutFit', String(on));
+    } catch {
+      /* storage unavailable: fine */
+    }
+  };
   const [selected, setSelected] = useState<string | null>(null);
   const [arrow, setArrow] = useState<string | null>(null);
+  const [codeOpen, setCodeOpen] = useState(false); // methods listed, or one row per class
   const stackMax = useMemo(() => maxStackPx(layout, steps), [layout, steps]);
 
-  // The rectangle fills the panel's height; the free gap gets whatever the other regions don't use.
+  // The rectangle fills the view's height; the free gap gets whatever the other regions don't use.
   useLayoutEffect(() => {
     const el = wrapRef.current?.parentElement;
     if (!el) return;
-    const ro = new ResizeObserver(() => setHeight(Math.max(640, el.clientHeight - 40)));
+    const ro = new ResizeObserver(() => setAvail({ w: el.clientWidth, h: el.clientHeight - 46 }));
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [!!step]); // the wrapper only exists once there is a step to draw
 
   const items = new Map<string, Item>();
   const ctx: Ctx | null = step ? { step, prev, layout, selected, select: setSelected, items } : null;
@@ -86,13 +106,14 @@ export default function AddressSpace({ steps, step, prev, index, layout }: Props
     const to = id ? rect.querySelector<HTMLElement>(`[data-obj="${id}"]`) : null;
     if (!from || !to || to.contains(from)) return setArrow(null);
     const base = rect.getBoundingClientRect();
+    const z = base.width / rect.offsetWidth || 1; // zoom applied by "fit to screen"
     const a = from.getBoundingClientRect();
     const b = to.getBoundingClientRect();
-    const x1 = a.right - base.left - 6;
-    const y1 = a.top + a.height / 2 - base.top;
-    const x2 = b.right - base.left + 2;
-    const y2 = b.top + Math.min(11, b.height / 2) - base.top;
-    const out = Math.max(a.right, b.right) - base.left + 48 + Math.min(60, Math.abs(y2 - y1) / 12);
+    const x1 = (a.right - base.left) / z - 6;
+    const y1 = (a.top + a.height / 2 - base.top) / z;
+    const x2 = (b.right - base.left) / z + 2;
+    const y2 = (b.top - base.top) / z + Math.min(11, b.height / z / 2);
+    const out = (Math.max(a.right, b.right) - base.left) / z + 48 + Math.min(60, Math.abs(y2 - y1) / 12);
     setArrow(`M${x1},${y1} C${out},${y1} ${out},${y2} ${x2},${y2}`);
   });
 
@@ -102,22 +123,30 @@ export default function AddressSpace({ steps, step, prev, index, layout }: Props
   const stack = stackBands(ctx);
   const heap = heapBands(ctx, index);
   const statics = staticBands(ctx);
-  const code = codeBands(ctx);
+  const code = codeBands(ctx, codeOpen);
   // The rectangle keeps ONE height for the whole run (the biggest the content ever gets, plus room
   // for free space), so the free gap visibly shrinks as the stack and heap grow into it.
   const labels = 4 * 26;
   const used = [stack, heap, statics, code].reduce((n, r) => n + r.px, 0) + labels;
   const lastIndex = layout.heapTopAt.length - 1;
   const heapMax = lastIndex > index ? heapBands({ ...ctx, items: new Map() }, lastIndex).px : heap.px;
-  const total = Math.max(height, stackMax + heapMax + statics.px + code.px + labels + 200);
+  const biggest = stackMax + heapMax + statics.px + code.px + labels; // everything at its largest in this run
+  // Fit to screen: one zoom for the whole run (so blocks don't resize while stepping), chosen so the
+  // run at its biggest still fits with some free space left; the free gap absorbs the rest.
+  const stacked = avail.w < STACK_BELOW;
+  const scale = !fit
+    ? 1
+    : Math.max(MIN_SCALE, Math.min(1, avail.h / (biggest + 90), (avail.w - (stacked ? 0 : PANEL_MIN + 20)) / RECT_WIDTH));
+  const total = fit ? Math.max(avail.h / scale, biggest + MIN_FREE) : Math.max(640, avail.h, biggest + 200);
   const freePx = Math.max(MIN_FREE, total - used);
   const freeBytes = stackBottom(layout, step) - (layout.heapTopAt[index] ?? layout.heapStart);
   const sel = selected ? items.get(selected) : undefined; // items are filled in while building the regions
 
   return (
-    <div className="as-wrap" ref={wrapRef}>
-      <div className="as-rect" ref={rectRef} onClick={() => setSelected(null)}>
-        <RegionLabel region="code" text="Code" hint="methods (bytecode)" />
+    <div className={'as-wrap' + (stacked ? ' stacked' : '') + (fit ? ' fit' : '')} ref={wrapRef}>
+      <div className="as-rect" ref={rectRef} style={{ zoom: scale }} onClick={() => setSelected(null)}>
+        <RegionLabel region="code" text="Code" hint={codeOpen ? 'methods (bytecode) · click to collapse' : 'click to list the methods'}
+          onClick={() => setCodeOpen(!codeOpen)} open={codeOpen} />
         {code.nodes}
         <RegionLabel region="static" text="Static data" hint="one copy per class" />
         {statics.nodes}
@@ -148,6 +177,14 @@ export default function AddressSpace({ steps, step, prev, index, layout }: Props
       </div>
 
       <aside className="as-panel">
+        <label className="switch as-fit" title="Shrink the picture so all of memory fits without scrolling">
+          <input type="checkbox" checked={fit} onChange={(e) => toggleFit(e.target.checked)} />
+          <span className="switch-track" aria-hidden>
+            <span className="switch-thumb" />
+          </span>
+          Fit to screen
+          {fit && scale < 1 && <span className="as-note">{Math.round(scale * 100)}%</span>}
+        </label>
         {sel ? <Details item={sel} ctx={ctx} /> : <Legend />}
       </aside>
     </div>
@@ -161,9 +198,14 @@ interface Region {
   px: number;
 }
 
-function RegionLabel({ region, text, hint }: { region: string; text: string; hint: string }) {
+function RegionLabel(props: { region: string; text: string; hint: string; onClick?: () => void; open?: boolean }) {
+  const { region, text, hint, onClick, open } = props;
   return (
-    <div className={'as-region-label ' + region}>
+    <div
+      className={'as-region-label ' + region + (onClick ? ' toggle' : '')}
+      onClick={onClick && ((e) => (e.stopPropagation(), onClick()))}
+    >
+      {onClick && <span className="as-caret">{open ? '▾' : '▸'}</span>}
       <b>{text}</b> <span>{hint}</span>
     </div>
   );
@@ -416,7 +458,8 @@ function staticBands(ctx: Ctx): Region {
   return { nodes, px };
 }
 
-function codeBands(ctx: Ctx): Region {
+/** The Code segment. Collapsed: one row per class (its methods are listed in the details panel). */
+function codeBands(ctx: Ctx, open: boolean): Region {
   const nodes: ReactNode[] = [];
   let px = 0;
   for (const c of ctx.layout.code) {
@@ -430,13 +473,14 @@ function codeBands(ctx: Ctx): Region {
         note: `The method's compiled bytecode: ${m.size} bytes of instructions. Every call to it runs this same code; only the stack frame is new.` };
       ctx.items.set(k, item);
       members.push(item);
+      if (!open) continue;
       const px2 = rowPx(m.size);
       h += px2;
       rows.push(<SlotRow key={i} k={k} ctx={ctx} px={px2} label={m.name.includes(' ') ? m.name : m.name + '()'} value={<span className="as-note">{m.size} B</span>} />);
     }
     ctx.items.set(key, { key, region: 'code', title: <>class <span className="as-cls">{c.cls}</span> code</>, addr: c.addr, size: c.size, members });
     px += h;
-    nodes.push(<Band key={key} k={key} ctx={ctx} region="code" px={h} addr={c.addr} head={<><span className="as-note">class</span> <b className="as-cls">{c.cls}</b><span className="as-bytes">{c.size} B</span></>}>{rows}</Band>);
+    nodes.push(<Band key={key} k={key} ctx={ctx} region="code" px={h} addr={c.addr} head={<><span className="as-note">class</span> <b className="as-cls">{c.cls}</b>{!open && <span className="as-note">{c.methods.length} method{c.methods.length === 1 ? '' : 's'}</span>}<span className="as-bytes">{c.size} B</span></>}>{rows}</Band>);
   }
   if (!nodes.length) {
     nodes.push(<div key="none" className="as-empty">no code info</div>);

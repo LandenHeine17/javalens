@@ -2,7 +2,7 @@
   "name": "javalens",
   "displayName": "JavaLens",
   "description": "See your Java program run step by step: the call stack, objects on the heap, memory addresses and Big-O growth, beside your code.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "publisher": "javalens",
   "license": "UNLICENSED",
   "repository": {

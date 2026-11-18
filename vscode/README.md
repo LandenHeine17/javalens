@@ -6,10 +6,14 @@ Open a `.java` file and click the **eye** button in the editor's title bar (or r
 
 - **Memory**: the call stack and the objects on the heap, with arrows for references.
 - **Memory map**: every variable, field and object with its (simulated) address, size and type; `static`, `final` and the string pool.
-- **Memory layout**: the whole memory drawn as one rectangle: code, static data and the heap at the top, the stack at the bottom, growing toward each other.
+- **Memory layout**: the whole memory drawn as one rectangle: code, static data and the heap at the top, the stack at the bottom, growing toward each other. *Fit to screen* shows it all without scrolling.
 - **Call tree** and **Growth (Big-O)**.
 
 The line being shown is highlighted in your editor, and the visualization re-runs as you type. Compile errors are underlined.
+
+## Projects with several files
+
+Classes in other files and packages just work. JavaLens finds your source folder from the `package` line (for `src/edu/unl/raikes/memory/Application.java` that's `src/`) and compiles the files your program uses, including unsaved edits. When a step goes into another file, that file opens with the line highlighted, like a debugger. Opening a file without `main` (a model class, say) keeps visualizing your program; opening another file with `main` switches to it.
 
 ## Requirements
 

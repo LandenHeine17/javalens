@@ -230,7 +230,10 @@ public final class Tracer {
         StringBuilder sb = new StringBuilder();
         StackFrame top = frames.get(frames.size() - 1);
         sb.append("{\"kind\":").append(Json.str(kind))
-          .append(",\"line\":").append(top.location().lineNumber())
+          .append(",\"line\":").append(top.location().lineNumber());
+        String topFile = otherFile(top);
+        if (topFile != null) sb.append(",\"file\":").append(Json.str(topFile));
+        sb
           .append(",\"out\":").append(stdout.length());
         if (hidden > 0) sb.append(",\"hiddenFrames\":").append(hidden);
 
@@ -242,8 +245,10 @@ public final class Tracer {
             sb.append("{\"id\":").append(ids.get(i))
               .append(",\"method\":").append(Json.str(m.name().equals("<init>") ? "new " + simpleName(m.declaringType().name()) : m.name()))
               .append(",\"cls\":").append(Json.str(m.declaringType().name()))
-              .append(",\"line\":").append(f.location().lineNumber())
-              .append(",\"locals\":[");
+              .append(",\"line\":").append(f.location().lineNumber());
+            String file = otherFile(f);
+            if (file != null) sb.append(",\"file\":").append(Json.str(file));
+            sb.append(",\"locals\":[");
             boolean first = true;
             ObjectReference self = f.thisObject();
             if (self != null) {
@@ -283,6 +288,16 @@ public final class Tracer {
 
         sb.append(",\"heap\":{").append(heap(toVisit)).append("}}");
         steps.add(sb.toString());
+    }
+
+    /** The frame's source file if it isn't the main file (e.g. "edu/unl/raikes/memory/models/Year.java"), else null. */
+    private String otherFile(StackFrame f) {
+        try {
+            String path = f.location().sourcePath().replace('\\', '/');
+            return path.equals(compiled.mainSource()) ? null : path;
+        } catch (AbsentInformationException e) {
+            return null;
+        }
     }
 
     private List<Long> assignFrameIds(List<StackFrame> frames, int hidden) {

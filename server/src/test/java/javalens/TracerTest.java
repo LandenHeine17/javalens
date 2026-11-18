@@ -106,6 +106,76 @@ class TracerTest {
     }
 
     @Test
+    void multiFileProjectsWithPackagesCompileAndTrace() throws Exception {
+        String main = """
+                package edu.example.app;
+
+                import edu.example.app.models.Year;
+
+                public class Application {
+                    public static void main(String[] args) {
+                        Year y = new Year(2024);
+                        System.out.println(y.days());
+                    }
+                }""";
+        String year = """
+                package edu.example.app.models;
+
+                public class Year {
+                    private final int number;
+
+                    public Year(int number) {
+                        this.number = number;
+                    }
+
+                    public int days() {
+                        return number % 4 == 0 ? 366 : 365;
+                    }
+                }""";
+        Compiler.Result c = Compiler.compile(main, "edu/example/app/Application.java",
+                java.util.List.of(new Compiler.Source("edu/example/app/models/Year.java", year)));
+        try {
+            assertTrue(c.ok(), "compile: " + c.diags());
+            assertEquals("edu.example.app.Application", c.mainClass());
+            String json = Tracer.run(c, "");
+            assertEquals("\"366\\n\"", stdoutOf(json));
+            // Steps inside Year say which file they're in; steps in the main file don't.
+            assertTrue(json.contains("\"file\":\"edu/example/app/models/Year.java\""), "step in Year.java");
+            assertFalse(json.contains("\"file\":\"edu/example/app/Application.java\""));
+            assertTrue(json.contains("{\"name\":\"number\",\"type\":\"int\",\"final\":true,"), "fields of the other file's class");
+        } finally {
+            Compiler.deleteQuietly(c.dir());
+        }
+    }
+
+    @Test
+    void errorsInOtherFilesSayWhichFile() throws Exception {
+        Compiler.Result c = Compiler.compile(
+                "package p; public class Main { public static void main(String[] a) { new p.util.Helper().go(); } }",
+                "p/Main.java",
+                java.util.List.of(new Compiler.Source("p/util/Helper.java", "package p.util; public class Helper { public void go() { int x = \"no\"; } }")));
+        try {
+            assertFalse(c.ok());
+            assertTrue(c.diags().stream().anyMatch(d -> "p/util/Helper.java".equals(d.file()) && d.line() == 1), c.diags().toString());
+        } finally {
+            Compiler.deleteQuietly(c.dir());
+        }
+    }
+
+    @Test
+    void unrelatedBrokenFilesInTheFolderAreIgnored() throws Exception {
+        Compiler.Result c = Compiler.compile(
+                "public class Hello { public static void main(String[] a) { System.out.println(\"hi\"); } }",
+                "Hello.java",
+                java.util.List.of(new Compiler.Source("Scratch.java", "public class Scratch { this does not compile }")));
+        try {
+            assertTrue(c.ok(), c.diags().toString());
+        } finally {
+            Compiler.deleteQuietly(c.dir());
+        }
+    }
+
+    @Test
     void collectionsShowTheirContents() throws Exception {
         String json = trace(sample("CollectionsDemo"), "");
         assertTrue(json.contains("\"role\":\"stack\",\"type\":\"Stack\""));

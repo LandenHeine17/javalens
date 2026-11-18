@@ -292,7 +292,9 @@ function FrameCard(props: {
                 {returning ? 'returning' : 'running'}
               </span>
             )}
-            <span className="frame-line">line {frame.line}</span>
+            <span className="frame-line" title={frame.file}>
+              {frame.file && frame.file.slice(frame.file.lastIndexOf('/') + 1) + ' · '}line {frame.line}
+            </span>
           </div>
           {caller && (
             <div className="called-from">

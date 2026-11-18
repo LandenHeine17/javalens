@@ -12,7 +12,7 @@ interface Point {
   end: string;
 }
 
-export default function Growth({ code, stdin }: { code: string; stdin: string }) {
+export default function Growth({ code, stdin, extra }: { code: string; stdin: string; extra?: Record<string, string> }) {
   const vary = useMemo(() => parseVary(code), [code]);
   const [samples, setSamples] = useState(8);
   const [points, setPoints] = useState<Point[]>([]);
@@ -39,7 +39,7 @@ export default function Growth({ code, stdin }: { code: string; stdin: string })
         const res = await fetch('/count', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: vary.substitute(n), stdin }),
+          body: JSON.stringify({ code: vary.substitute(n), stdin, ...extra }),
           signal: ctrl.signal,
         });
         const data: CountResult = await res.json();

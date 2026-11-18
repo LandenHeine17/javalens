@@ -3,10 +3,13 @@
 // "JavaLens: Visualize" starts the bundled JavaLens server (server/javalens.jar, run with the user's
 // JDK 25) and opens a panel beside the editor. The panel shows the JavaLens page in VS Code mode
 // (?host=vscode), inside an iframe. Messages flow:
-//   extension -> page   { type: 'code', code }        the active .java file, on open and on every edit
+//   extension -> page   { type: 'code', code,         the main .java file, on open and on every edit,
+//                         mainPath, files }           plus the rest of its project (every .java file
+//                                                     under the source root), so imports work
 //                       { type: 'theme', theme }      'dark' | 'light', following VS Code's theme
 //   page -> extension   { type: 'ready' }             the page is listening
-//                       { type: 'line', line, kind }  the step being shown -> highlight that line here
+//                       { type: 'line', line, file }  the step being shown -> highlight that line
+//                                                     (file: set when it's in another file of the project)
 //                       { type: 'diagnostics', ... }  compile errors -> squiggles in the editor
 import * as vscode from 'vscode';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
@@ -22,7 +25,13 @@ interface Server {
 }
 let server: Server | null = null;
 let panel: vscode.WebviewPanel | null = null;
-let boundDoc: vscode.TextDocument | null = null; // the .java file the panel is showing
+let boundDoc: vscode.TextDocument | null = null; // the .java file whose main() the panel runs
+let sourceRoot: string | null = null; // the folder its package starts in, e.g. .../src
+let projectFiles: string[] | null = null; // cached list of the other .java files under sourceRoot
+let sendTimer: NodeJS.Timeout | undefined;
+let followingStep = false; // we're opening a file to show a step: don't treat it as the user switching files
+const MAX_FILES = 300;
+const SKIP_DIRS = new Set(['bin', 'out', 'build', 'target', 'node_modules', '.git', '.gradle', '.idea', '.vscode', '.metals']);
 let output: vscode.OutputChannel;
 let diagnostics: vscode.DiagnosticCollection;
 let lineDecoration: vscode.TextEditorDecorationType;
@@ -46,13 +55,30 @@ export function activate(context: vscode.ExtensionContext) {
     lineDecoration,
     vscode.commands.registerCommand('javalens.visualize', () => visualize(context)),
 
-    // Follow the user: edits to the bound file re-run it, switching to another .java file shows that one.
+    // Edits to any file of the program re-run it.
     vscode.workspace.onDidChangeTextDocument((e) => {
-      if (panel && e.document === boundDoc) sendCode();
+      if (panel && inProject(e.document.uri.fsPath)) scheduleSend();
     }),
+    // Switching to another file with a main() method visualizes that program instead.
+    // (Files without main, like a model class, are part of the current program: stay put.)
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (panel && editor?.document.languageId === 'java' && editor.document !== boundDoc) bind(editor.document);
+      const doc = editor?.document;
+      if (!panel || followingStep || !doc || doc.languageId !== 'java' || doc === boundDoc) return;
+      if (hasMain(doc.getText())) bind(doc);
     }),
+    // New or deleted .java files change the project.
+    (() => {
+      const watcher = vscode.workspace.createFileSystemWatcher('**/*.java', false, true, false);
+      const changed = (uri: vscode.Uri) => {
+        if (panel && sourceRoot && uri.fsPath.startsWith(sourceRoot + path.sep)) {
+          projectFiles = null;
+          scheduleSend();
+        }
+      };
+      watcher.onDidCreate(changed);
+      watcher.onDidDelete(changed);
+      return watcher;
+    })(),
     vscode.window.onDidChangeActiveColorTheme(() => post({ type: 'theme', theme: themeName() })),
     { dispose: stopServer },
   );
@@ -139,15 +165,90 @@ function webviewHtml(origin: string): string {
 function bind(doc: vscode.TextDocument) {
   if (boundDoc && boundDoc !== doc) {
     clearHighlights();
-    diagnostics.delete(boundDoc.uri);
+    diagnostics.clear();
   }
   boundDoc = doc;
+  sourceRoot = findSourceRoot(doc);
+  projectFiles = null;
   if (panel) panel.title = `JavaLens: ${path.basename(doc.fileName)}`;
   sendCode();
 }
 
+function hasMain(code: string): boolean {
+  return /\bvoid\s+main\s*\(/.test(code);
+}
+
+/**
+ * Where the main file's package starts: for src/edu/unl/raikes/memory/Application.java with
+ * "package edu.unl.raikes.memory;" that's src/. Without a package, the file's own folder.
+ */
+function findSourceRoot(doc: vscode.TextDocument): string {
+  const dir = path.dirname(doc.uri.fsPath);
+  const pkg = /^\s*package\s+([\w.]+)\s*;/m.exec(doc.getText())?.[1];
+  if (!pkg) return dir;
+  const parts = pkg.split('.');
+  const tail = dir.split(path.sep).slice(-parts.length);
+  return tail.join('.') === pkg ? path.join(dir, ...parts.map(() => '..')) : dir;
+}
+
+const rel = (file: string) => path.relative(sourceRoot!, file).split(path.sep).join('/');
+
+function inProject(file: string): boolean {
+  return !!sourceRoot && file.endsWith('.java') && (file === boundDoc?.uri.fsPath || file.startsWith(sourceRoot + path.sep));
+}
+
+/** Every .java file under the source root (skipping build output), cached until files are added or removed. */
+function listProjectFiles(): string[] {
+  if (projectFiles) return projectFiles;
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (found.length >= MAX_FILES) return;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        // Without a package, files in subfolders can't belong to the program: don't look there.
+        if (recursive && !SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) walk(full);
+      } else if (e.name.endsWith('.java')) {
+        found.push(full);
+      }
+    }
+  };
+  const recursive = !!boundDoc && /^\s*package\s+[\w.]+\s*;/m.test(boundDoc.getText());
+  if (sourceRoot) walk(sourceRoot);
+  projectFiles = found;
+  return found;
+}
+
+/** A file's current text: the editor's (unsaved edits included) if it's open, else from disk. */
+function readSource(file: string): string | null {
+  const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
+  if (open) return open.getText();
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function scheduleSend() {
+  clearTimeout(sendTimer);
+  sendTimer = setTimeout(sendCode, 150);
+}
+
 function sendCode() {
-  if (boundDoc) post({ type: 'code', code: boundDoc.getText() });
+  if (!boundDoc || !sourceRoot) return;
+  const main = boundDoc.uri.fsPath;
+  const files = listProjectFiles()
+    .filter((f) => f !== main)
+    .map((f) => ({ path: rel(f), code: readSource(f) }))
+    .filter((f): f is { path: string; code: string } => f.code !== null);
+  post({ type: 'code', code: boundDoc.getText(), mainPath: rel(main), files });
 }
 
 function post(msg: unknown) {
@@ -165,40 +266,68 @@ interface PageDiagnostic {
   endCol: number;
   message: string;
   severity: 'error' | 'warning';
+  file?: string; // relative to the source root; absent for the main file
 }
 
-function onPageMessage(msg: { type?: string; line?: number | null; diagnostics?: PageDiagnostic[] }) {
+/** A path the page sent (relative to the source root), or the main file when absent. */
+function uriFor(file: string | null | undefined): vscode.Uri | null {
+  if (!file) return boundDoc?.uri ?? null;
+  if (!sourceRoot) return null;
+  const full = path.resolve(sourceRoot, ...file.split('/'));
+  return full.startsWith(sourceRoot + path.sep) ? vscode.Uri.file(full) : null;
+}
+
+function onPageMessage(msg: { type?: string; line?: number | null; file?: string | null; diagnostics?: PageDiagnostic[] }) {
   if (msg.type === 'ready') {
     post({ type: 'theme', theme: themeName() });
     sendCode();
   } else if (msg.type === 'line') {
-    highlightLine(msg.line ?? null);
+    highlightLine(msg.line ?? null, msg.file ?? null);
   } else if (msg.type === 'diagnostics' && boundDoc) {
+    diagnostics.clear();
     if (!vscode.workspace.getConfiguration('javalens').get<boolean>('showCompileErrors', true)) return;
-    const doc = boundDoc;
-    diagnostics.set(
-      doc.uri,
-      (msg.diagnostics ?? []).map((d) => {
-        const line = Math.min(Math.max(0, d.line - 1), doc.lineCount - 1);
-        const range = new vscode.Range(line, Math.max(0, d.col - 1), line, Math.max(d.col, d.endCol - 1));
-        const severity = d.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning;
-        const diag = new vscode.Diagnostic(range, d.message, severity);
-        diag.source = 'JavaLens';
-        return diag;
-      }),
-    );
+    const byFile = new Map<string, { uri: vscode.Uri; list: vscode.Diagnostic[] }>();
+    for (const d of msg.diagnostics ?? []) {
+      const uri = uriFor(d.file);
+      if (!uri) continue;
+      const line = Math.max(0, d.line - 1);
+      const range = new vscode.Range(line, Math.max(0, d.col - 1), line, Math.max(d.col, d.endCol - 1));
+      const severity = d.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning;
+      const diag = new vscode.Diagnostic(range, d.message, severity);
+      diag.source = 'JavaLens';
+      const entry = byFile.get(uri.toString()) ?? { uri, list: [] };
+      entry.list.push(diag);
+      byFile.set(uri.toString(), entry);
+    }
+    for (const { uri, list } of byFile.values()) diagnostics.set(uri, list);
   }
 }
 
-/** Highlight the line the visualizer is showing, in every editor that has the file open. */
-function highlightLine(line: number | null) {
-  if (!boundDoc) return;
+/**
+ * Highlight the line the visualizer is showing. When a step is in another file of the program
+ * (stepping into Year's constructor, say), open that file where the main file is, like a debugger does.
+ */
+async function highlightLine(line: number | null, file: string | null) {
+  const uri = uriFor(file);
   for (const editor of vscode.window.visibleTextEditors) {
-    if (editor.document !== boundDoc) continue;
-    if (line === null || line < 1 || line > boundDoc.lineCount) {
-      editor.setDecorations(lineDecoration, []);
-      continue;
+    if (!uri || editor.document.uri.toString() !== uri.toString()) editor.setDecorations(lineDecoration, []);
+  }
+  if (!uri || line === null || line < 1) return;
+
+  let editors = vscode.window.visibleTextEditors.filter((e) => e.document.uri.toString() === uri.toString());
+  if (!editors.length) {
+    const column = vscode.window.visibleTextEditors.find((e) => inProject(e.document.uri.fsPath))?.viewColumn ?? vscode.ViewColumn.One;
+    followingStep = true;
+    try {
+      editors = [await vscode.window.showTextDocument(uri, { viewColumn: column, preserveFocus: true, preview: true })];
+    } catch {
+      return;
+    } finally {
+      setTimeout(() => (followingStep = false), 300);
     }
+  }
+  for (const editor of editors) {
+    if (line > editor.document.lineCount) continue;
     const range = new vscode.Range(line - 1, 0, line - 1, 0);
     editor.setDecorations(lineDecoration, [range]);
     editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);

@@ -23,6 +23,7 @@ export interface Frame {
   method: string;
   cls: string;
   line: number;
+  file?: string; // source file, when it isn't the main file (multi-file projects in VS Code)
   locals: Local[];
   ret?: Value | null; // present on "return" steps for the top frame
 }
@@ -38,6 +39,7 @@ export type HeapObj =
 export interface Step {
   kind: 'line' | 'return' | 'exception';
   line: number;
+  file?: string; // the top frame's source file, when it isn't the main file
   out: number; // length of stdout at this step
   stack: Frame[]; // bottom (main) -> top
   heap: Record<string, HeapObj>;
@@ -52,6 +54,13 @@ export interface Diagnostic {
   endCol: number;
   message: string;
   severity: 'error' | 'warning';
+  file?: string; // set for errors in another file of the project
+}
+
+/** The rest of a multi-file program (sent by the VS Code extension): paths relative to the source root. */
+export interface Project {
+  mainPath: string;
+  files: { path: string; code: string }[];
 }
 
 /** A user class's methods and their bytecode size: the "Code" segment of the memory layout. */

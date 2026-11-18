@@ -165,7 +165,7 @@ export default function Editor({ code, onChange, step, diagnostics, fontSize, co
     monaco.editor.setModelMarkers(
       model,
       'javac',
-      diagnostics.map((d) => ({
+      diagnostics.filter((d) => !d.file).map((d) => ({
         startLineNumber: d.line,
         endLineNumber: d.line,
         startColumn: d.col,
