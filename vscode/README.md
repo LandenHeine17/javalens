@@ -7,6 +7,7 @@ Open a `.java` file and click the **eye** button in the editor's title bar (or r
 - **Memory**: the call stack and the objects on the heap, with arrows for references.
 - **Memory map**: every variable, field and object with its (simulated) address, size and type; `static`, `final` and the string pool.
 - **Memory layout**: the whole memory drawn as one rectangle: code, static data and the heap at the top, the stack at the bottom, growing toward each other. *Fit to screen* shows it all without scrolling.
+- **Sort & Search**: the array being sorted or searched as bars, with comparisons, swaps, recursion ranges, live counters and a race between two algorithms.
 - **Call tree** and **Growth (Big-O)**.
 
 The line being shown is highlighted in your editor, and the visualization re-runs as you type. Compile errors are underlined.

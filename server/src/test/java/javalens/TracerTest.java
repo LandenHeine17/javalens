@@ -43,6 +43,10 @@ class TracerTest {
             SelectionSort   | [10, 13, 14, 29, 37]\\n
             LinkedList      | 1\\n2\\n3\\n
             BinarySearch    | [found at 5]\\n
+            InsertionSort   | [3, 9, 10, 19, 27, 38, 43, 82]\\n
+            MergeSort       | [3, 9, 10, 19, 27, 38, 43, 82]\\n
+            QuickSort       | [3, 9, 10, 19, 27, 38, 43, 82]\\n
+            LinearSearch    | 82 found at index 5\\n
             BinaryTree      | root is 50\\n
             CollectionsDemo | 3 Ana {not=1, be=2, or=1, to=2}\\n
             BigO            | 8 -> 64\\n

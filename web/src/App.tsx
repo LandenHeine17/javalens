@@ -3,12 +3,13 @@ import Editor from './Editor';
 import MemoryView from './MemoryView';
 import MemoryMap from './MemoryMap';
 import AddressSpace from './AddressSpace';
+import AlgoView from './AlgoView';
 import { buildLayout } from './memoryLayout';
 import CallTree from './CallTree';
 import Growth from './Growth';
 import Timeline from './Timeline';
 import {
-  AArrowDown, AArrowUp, Binary, BookOpen, Bug, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers, Lightbulb,
+  AArrowDown, AArrowUp, ArrowDownUp, Binary, BookOpen, Bug, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers, Lightbulb,
   LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, Presentation, RectangleVertical, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
 } from 'lucide-react';
 import { indexVariableNames, lineCounts } from './analysis';
@@ -46,7 +47,7 @@ export function projectFields(project: Project | null): Record<string, string> {
 const baseName = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 
 type Status = { kind: 'idle' | 'running' | 'ok' | 'compile' | 'error'; text: string };
-type Tab = 'memory' | 'map' | 'space' | 'tree' | 'growth';
+type Tab = 'memory' | 'map' | 'space' | 'algo' | 'tree' | 'growth';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -394,6 +395,7 @@ export default function App() {
                 ['memory', 'Memory', Layers],
                 ['map', 'Memory map', Binary],
                 ['space', 'Memory layout', RectangleVertical],
+                ['algo', 'Sort & Search', ArrowDownUp],
                 ['tree', 'Call tree', Network],
                 ['growth', 'Growth', TrendingUp],
               ] as [Tab, string, typeof Layers][]
@@ -423,6 +425,7 @@ export default function App() {
           <div className="view-scroll">
             {tab === 'memory' && <MemoryView step={step} prev={steps[index - 1]} indexNames={indexNames} />}
             {tab === 'map' && <MemoryMap step={step} prev={steps[index - 1]} layout={layout} />}
+            {tab === 'algo' && <AlgoView steps={steps} index={index} code={code} project={project} stdin={stdin} samples={samples} />}
             {tab === 'space' && <AddressSpace steps={steps} step={step} prev={steps[index - 1]} index={index} layout={layout} />}
             {tab === 'tree' && <CallTree steps={steps} index={index} onPick={jumpTo} fontSize={fontSize} />}
             {tab === 'growth' && <Growth code={code} stdin={stdin} extra={projectFields(project)} />}
