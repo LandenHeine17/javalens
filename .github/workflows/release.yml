@@ -56,6 +56,26 @@ jobs:
       - name: Build portable app
         run: ./gradlew portable -Pversion="$VERSION" -PupdateRepo="${{ github.repository }}"
 
+      # Guard against archives that lose the execute bit (the launcher, bin/java and jspawnhelper
+      # must stay runnable), and on Linux actually start the packaged app and trace a program.
+      - name: Check the portable app runs
+        if: runner.os != 'Windows'
+        run: |
+          archive=$(ls -t build/dist/*-portable.tar.gz build/dist/*-portable.zip 2>/dev/null | head -1)
+          if [ "$RUNNER_OS" = Linux ]; then list=$(tar tvzf "$archive"); else list=$(zipinfo "$archive"); fi
+          for f in '/bin/java$' 'jspawnhelper$'; do
+            echo "$list" | grep -E "^-rwx.*$f" || { echo "::error::Portable app lost the execute bit on $f"; exit 1; }
+          done
+          if [ "$RUNNER_OS" = Linux ]; then
+            mkdir -p smoke && tar xzf "$archive" -C smoke
+            smoke/JavaLens/bin/JavaLens --embedded --port 7171 > smoke/app.log 2>&1 &
+            for i in $(seq 1 60); do grep -q listening smoke/app.log && break; sleep 1; done
+            python3 -c "import json; print(json.dumps({'code': open('samples/Factorial.java').read(), 'stdin': ''}))" > smoke/req.json
+            curl -sf -X POST -H 'Content-Type: application/json' --data @smoke/req.json http://127.0.0.1:7171/run | grep -q '4! = 24' \
+              || { echo "::error::The packaged app did not run a program"; cat smoke/app.log; exit 1; }
+            echo "Packaged app traced Factorial correctly"
+          fi
+
       - name: Build installer
         # If the installer step ever breaks on one OS, the portable build is still published.
         continue-on-error: true

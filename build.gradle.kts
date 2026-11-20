@@ -239,16 +239,24 @@ val portable = tasks.register("portable") {
     description = "Packs the app folder into build/dist as a .zip (Windows/macOS) or .tar.gz (Linux)"
     dependsOn(if (isWindows || isMac) "portableZip" else "portableTar")
 }
+// Gradle 9 archives are "reproducible" by default, which resets every file to rw-r--r-- and would
+// leave the launcher, bin/java and jspawnhelper unable to run. Keep the execute bit wherever the
+// app folder has it.
+fun AbstractArchiveTask.keepExecutableBits() {
+    eachFile { if (file.canExecute()) permissions { unix("rwxr-xr-x") } }
+}
 tasks.register<Zip>("portableZip") {
     from(appImage)
     archiveFileName = "$portableName.zip"
     destinationDirectory = layout.buildDirectory.dir("dist")
+    keepExecutableBits()
 }
 tasks.register<Tar>("portableTar") {
     from(appImage)
     compression = Compression.GZIP
     archiveFileName = "$portableName.tar.gz"
     destinationDirectory = layout.buildDirectory.dir("dist")
+    keepExecutableBits()
 }
 
 // ---------------------------------------------------------------- VS Code extension (vscode/)
