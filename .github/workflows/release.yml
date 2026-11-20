@@ -61,18 +61,25 @@ jobs:
       - name: Check the portable app runs
         if: runner.os != 'Windows'
         run: |
-          archive=$(ls -t build/dist/*-portable.tar.gz build/dist/*-portable.zip 2>/dev/null | head -1)
+          # (Steps run with bash -e -o pipefail: avoid commands that "fail" just because a glob or pipe ends early.)
+          archive=""
+          for a in build/dist/*-portable.tar.gz build/dist/*-portable.zip; do
+            if [ -f "$a" ]; then archive="$a"; fi
+          done
+          if [ -z "$archive" ]; then echo "::error::No portable archive in build/dist"; exit 1; fi
           if [ "$RUNNER_OS" = Linux ]; then list=$(tar tvzf "$archive"); else list=$(zipinfo "$archive"); fi
           for f in '/bin/java$' 'jspawnhelper$'; do
-            echo "$list" | grep -E "^-rwx.*$f" || { echo "::error::Portable app lost the execute bit on $f"; exit 1; }
+            grep -E "^-rwx.*$f" <<< "$list" || { echo "::error::Portable app lost the execute bit on $f"; exit 1; }
           done
           if [ "$RUNNER_OS" = Linux ]; then
             mkdir -p smoke && tar xzf "$archive" -C smoke
             smoke/JavaLens/bin/JavaLens --embedded --port 7171 > smoke/app.log 2>&1 &
             for i in $(seq 1 60); do grep -q listening smoke/app.log && break; sleep 1; done
             python3 -c "import json; print(json.dumps({'code': open('samples/Factorial.java').read(), 'stdin': ''}))" > smoke/req.json
-            curl -sf -X POST -H 'Content-Type: application/json' --data @smoke/req.json http://127.0.0.1:7171/run | grep -q '4! = 24' \
-              || { echo "::error::The packaged app did not run a program"; cat smoke/app.log; exit 1; }
+            result=$(curl -sf -X POST -H 'Content-Type: application/json' --data @smoke/req.json http://127.0.0.1:7171/run || true)
+            if ! grep -q '4! = 24' <<< "$result"; then
+              echo "::error::The packaged app did not run a program"; cat smoke/app.log; exit 1
+            fi
             echo "Packaged app traced Factorial correctly"
           fi
 
