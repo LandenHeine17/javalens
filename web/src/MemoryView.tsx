@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { Frame, HeapObj, Step, Value } from './types';
+import { valueHistory } from './analysis';
 
 /**
  * Memory diagram: the call stack on the left (newest call on top), objects on the heap on the right,
@@ -11,13 +12,15 @@ interface Props {
   step: Step | undefined;
   prev: Step | undefined; // previous step, used to highlight what changed
   indexNames: Set<string>; // variables used as array indexes in the code (i, j, mid...)
+  steps?: Step[]; // the whole run and the current position: for a variable's value history on hover
+  index?: number;
 }
 
 type Hover = (id: number | null) => void;
 const MAX_INDENT = 8; // deeper calls stop indenting so deep recursion doesn't run off the screen
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-export default function MemoryView({ step, prev, indexNames }: Props) {
+export default function MemoryView({ step, prev, indexNames, steps, index }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [arrows, setArrows] = useState<{ d: string; to: number; key: string }[]>([]);
   const [hovered, setHovered] = useState<number | null>(null);
@@ -78,7 +81,7 @@ export default function MemoryView({ step, prev, indexNames }: Props) {
   const prevFrames = new Map((prev?.stack ?? []).map((f) => [f.id, f]));
   const hiddenArgs = hiddenArgsId(step);
   const pointers = indexPointers(step, indexNames);
-  const ctx: Ctx = { step, prev, hovered, onHover: setHovered, pointers };
+  const ctx: Ctx = { step, prev, hovered, onHover: setHovered, pointers, steps, index };
 
   return (
     <div className="memory" ref={wrapRef}>
@@ -128,6 +131,8 @@ interface Ctx {
   hovered: number | null;
   onHover: Hover;
   pointers: Map<number, Map<number, string[]>>; // array id -> index -> variable names
+  steps?: Step[];
+  index?: number;
 }
 
 // ------------------------------------------------------------ grouping the heap
@@ -272,6 +277,7 @@ function FrameCard(props: {
   hiddenAfter?: number;
 }) {
   const { frame, caller, indent, prevFrame, isTop, ctx, hiddenArgs, hiddenAfter } = props;
+  const [historyOf, setHistoryOf] = useState<string | null>(null); // hovered variable (history computed on demand)
   const prevLocals = new Map((prevFrame?.locals ?? []).map((l) => [l.name, l.v]));
   const locals = frame.locals.filter((l) => !(l.v.k === 'r' && l.v.id === hiddenArgs));
   const returning = isTop && ctx.step.kind === 'return';
@@ -305,13 +311,21 @@ function FrameCard(props: {
           {locals.map((l) => {
             const changed = prevFrame && !same(prevLocals.get(l.name), l.v);
             return (
-              <div className={'local' + (changed ? ' changed' : '')} key={l.name}>
+              <div
+                className={'local' + (changed ? ' changed' : '')}
+                key={l.name}
+                onMouseEnter={l.v.k === 'p' ? () => setHistoryOf(l.name) : undefined}
+                onMouseLeave={() => setHistoryOf(null)}
+              >
                 <span className="var-type">
                   {l.final && <span className="badge final">final</span>}
                   {l.type}
                 </span>
                 <span className="var-name">{l.name}</span>
                 <ValueView v={l.v} ctx={ctx} />
+                {historyOf === l.name && ctx.steps && ctx.index !== undefined && (
+                  <Sparkline points={valueHistory(ctx.steps, frame.id, l.name, ctx.index)} name={l.name} />
+                )}
               </div>
             );
           })}
@@ -328,6 +342,33 @@ function FrameCard(props: {
         </div>
       )}
     </>
+  );
+}
+
+/** A variable's values so far in this call, as a tiny line chart (shown while hovering the variable). */
+function Sparkline({ points, name }: { points: { step: number; v: number }[]; name: string }) {
+  if (points.length < 2) return null;
+  const changes = points.filter((p, i) => i > 0 && p.v !== points[i - 1].v).length;
+  if (changes === 0) return null;
+  const w = 140, h = 34, pad = 3;
+  const vs = points.map((p) => p.v);
+  const lo = Math.min(...vs), hi = Math.max(...vs);
+  const x0 = points[0].step, x1 = points[points.length - 1].step;
+  const x = (s: number) => pad + ((s - x0) / Math.max(1, x1 - x0)) * (w - 2 * pad);
+  const y = (v: number) => h - pad - ((v - lo) / Math.max(1e-9, hi - lo)) * (h - 2 * pad);
+  // a step chart: the value holds until the step that changes it
+  const d = points.map((p, i) => (i === 0 ? `M${x(p.step)},${y(p.v)}` : `H${x(p.step)}V${y(p.v)}`)).join('');
+  const last = points[points.length - 1];
+  return (
+    <div className="sparkline" role="img" aria-label={`${name} so far: ${vs.join(', ')}`}>
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+        <path d={d} />
+        <circle cx={x(last.step)} cy={y(last.v)} r={2.5} />
+      </svg>
+      <span>
+        {name} so far: {lo}…{hi} · changed {changes}×
+      </span>
+    </div>
   );
 }
 

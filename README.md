@@ -71,12 +71,14 @@ Release builds check that repo's Releases page and show an **Update available** 
   - `Shift+←` / `Shift+→` step over method calls.
   - `Home` / `End` jump to the first or last step.
   - `Space` plays or pauses.
+- **The line under the timeline** says in plain words what the last step changed: `sum: 3 → 6`, `a[2] = 5`, `new Node`, `call fib(n=4)`, `fib() returned 3`.
+- **Hover a number variable** in the Memory tab to see a small chart of the values it has held so far in that call (never ahead of the current step, so Predict mode isn't spoiled).
 - **The blue strip under the slider** charts stack depth over time. Each recursive call is a hill. Click the strip to jump to that point.
 - **A− / A+** change the text size for projectors.
 - **Input** opens a text box for what the program reads through `Scanner`.
 - **Examples** lists every `.java` file in `samples/`. To add a lesson, drop in a new file; the page reloads to pick it up.
 - **Click a line number** to jump to the next time that line runs.
-- **Share** copies a link that reopens the program, its input, the open tab and the current step. Everything is packed into the link itself (after the `#`), so nothing is uploaded. The link opens wherever JavaLens runs at the same address, for example `http://127.0.0.1:7070/` on another computer with JavaLens open.
+- **Share** copies a link that reopens the program, its input, the open tab and the current step. Everything is packed into the link itself (after the `#`), so nothing is uploaded. If the browser won't allow copying, the link appears selected next to the button, ready for Ctrl+C. The link opens wherever JavaLens runs at the same address, for example `http://127.0.0.1:7070/` on another computer with JavaLens open.
 
 ### Views (tabs on the right)
 

@@ -376,6 +376,56 @@ main.no-code { grid-template-columns: 1fr; }
 .banner.error { background: var(--error-soft); color: var(--error-text); border: 1px solid rgba(255, 107, 107, 0.25); }
 .banner.warn { background: var(--warn-soft); color: var(--warn); border: 1px solid rgba(245, 184, 74, 0.25); }
 
+.share-url {
+  width: 16em;
+  font: 0.8em var(--mono);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
+/* ---------- what the last step changed (under the timeline) */
+.changes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  font: calc(var(--fs) * 0.75) var(--mono);
+  white-space: nowrap;
+  overflow-x: auto;
+  min-height: 2.4em;
+}
+.changes-label { font-family: var(--sans); color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.85em; }
+.changes .change { background: var(--changed); border-radius: 5px; padding: 1px 7px; }
+.changes .muted { font-family: var(--sans); }
+
+/* a variable's values so far, while hovering it */
+.local { position: relative; }
+.sparkline {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translate(8px, -50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  font: 0.72em var(--sans);
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.sparkline path { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.sparkline circle { fill: var(--accent); }
+
 /* ---------- tabs */
 .tabs { display: flex; gap: 4px; padding: 10px 14px 0; align-items: center; }
 .tab { background: transparent; border-color: transparent; color: var(--muted); padding: 6px 12px; border-radius: 99px; }

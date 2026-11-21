@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bestFit, buildCallTree, indexVariableNames, lineCounts, parseVary, samplePoints, shortValue } from '../src/analysis.ts';
-import { frame, int, intArray, local, ref, step } from './fixtures.ts';
+import { bestFit, buildCallTree, indexVariableNames, lineCounts, firstSeen, parseVary, samplePoints, shortValue, stepChanges, valueHistory } from '../src/analysis.ts';
+import { frame, int, intArray, local, nul, ref, step } from './fixtures.ts';
+import type { Value } from '../src/types.ts';
 
 test('indexVariableNames finds bracket indexes and for-loop counters', () => {
   const names = indexVariableNames('for (int q = 0; q < n; q++) { if (nums[pos + 1] > 0) {} }');
@@ -72,4 +73,46 @@ test('bestFit names the growth rate', () => {
   assert.equal(bestFit(pts(() => 7))!.name, 'O(1)');
   assert.equal(bestFit(pts((n) => 2 ** n))!.name, 'O(2ⁿ)');
   assert.equal(bestFit([{ n: 1, count: 1 }]), null);
+});
+
+test('stepChanges describes calls, variables and heap writes in plain words', () => {
+  const main = (sum: number, extra: ReturnType<typeof local>[] = []) => frame(1, 'main', [local('a', ref(10)), local('sum', int(sum)), ...extra]);
+  const node = (next: Value) => ({ kind: 'object' as const, type: 'Node', fields: [{ name: 'next', type: 'Node', v: next }] });
+
+  assert.deepEqual(stepChanges(undefined, step([main(0)])), []);
+  // a variable changes and an array cell is written
+  assert.deepEqual(
+    stepChanges(step([main(3)], { 10: intArray(1, 2) }), step([main(6)], { 10: intArray(1, 5) })),
+    ['sum: 3 → 6', 'a[1] = 5'],
+  );
+  // a new variable, a new object, and a field pointing somewhere else
+  assert.deepEqual(
+    stepChanges(
+      step([main(0, [local('n', ref(11))])], { 10: intArray(), 11: node(nul) }),
+      step([main(0, [local('n', ref(11)), local('m', ref(12))])], { 10: intArray(), 11: node(ref(12)), 12: node(nul) }),
+    ),
+    ['m = Node', 'n.next: null → Node', 'new Node'],
+  );
+  // a call, then its return
+  const callee = frame(2, 'fib', [local('n', int(4))]);
+  assert.deepEqual(stepChanges(step([main(0)]), step([main(0), callee])), ['call fib(n=4)']);
+  assert.deepEqual(stepChanges(step([main(0), { ...callee, ret: int(3) }], {}, { kind: 'return' }), step([main(0)])), ['fib() returned 3']);
+  // an object that drops out of view and comes back isn't new again
+  const back = [step([main(0, [local('n', ref(11))])], { 10: intArray(), 11: node(nul) }), step([main(0)], { 10: intArray() }), step([main(0, [local('n', ref(11))])], { 10: intArray(), 11: node(nul) })];
+  const born = firstSeen(back);
+  assert.deepEqual(stepChanges(back[1], back[2], (id) => born.get(id) === 2), ['n = Node']);
+  // long lists are cut short
+  const many = stepChanges(step([main(0)], { 10: intArray(0, 0, 0, 0, 0, 0, 0, 0) }), step([main(0)], { 10: intArray(1, 2, 3, 4, 5, 6, 7, 8) }));
+  assert.equal(many.length, 6);
+  assert.equal(many.at(-1), '+3 more');
+});
+
+test('valueHistory follows one call\'s variable and never looks ahead', () => {
+  const steps = [0, 1, 1, 3, 6].map((v) => step([frame(1, 'main', [local('sum', int(v))])]));
+  steps.splice(2, 0, step([frame(1, 'main', [])])); // a step where it's out of scope
+  assert.deepEqual(valueHistory(steps, 1, 'sum', 3).map((p) => p.v), [0, 1, 1]);
+  assert.deepEqual(valueHistory(steps, 1, 'sum', 99).map((p) => p.step), [0, 1, 3, 4, 5]);
+  assert.deepEqual(valueHistory(steps, 2, 'sum', 99), []); // another call
+  const bools = [step([frame(1, 'main', [local('ok', { k: 'p', v: 'true' })])])];
+  assert.deepEqual(valueHistory(bools, 1, 'ok', 0), []);
 });

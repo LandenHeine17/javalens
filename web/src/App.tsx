@@ -12,7 +12,7 @@ import {
   AArrowDown, AArrowUp, ArrowDownUp, Binary, BookOpen, Bug, Check, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers, Lightbulb,
   LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, Presentation, RectangleVertical, Share2, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
 } from 'lucide-react';
-import { indexVariableNames, lineCounts } from './analysis';
+import { firstSeen, indexVariableNames, lineCounts, stepChanges } from './analysis';
 import { defaultSample, samples } from './samples';
 import { decodeShare, encodeShare } from './share';
 import type { CodeClass, Diagnostic, EndReason, Project, RunResult, Step } from './types';
@@ -103,33 +103,44 @@ export default function App() {
   const abortRef = useRef<AbortController | null>(null);
   const [appVersion, setAppVersion] = useState<{ version: string; latest: string | null; url: string | null } | null>(null);
   const [shareNote, setShareNote] = useState<string | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null); // shown to copy by hand when the clipboard isn't available
 
-  // Opened from a share link (#s=...): load its program, input, tab and step, then tidy the address
-  // bar so a refresh keeps later edits instead of going back to the shared version.
+  // Opened from a share link (#s=...), or one pasted into an open JavaLens tab: load its program,
+  // input, tab and step, then tidy the address bar so a refresh keeps later edits.
   useEffect(() => {
     if (IN_VSCODE) return;
-    decodeShare(location.hash).then((s) => {
-      if (!s) return;
-      setCode(s.code);
-      setStdin(s.stdin ?? '');
-      if (s.stdin) setShowStdin(true);
-      if (s.tab && (TABS as string[]).includes(s.tab)) setTab(s.tab as Tab);
-      setIndexRaw(s.step ?? 0); // the run that follows keeps this step (it only clamps it)
-      history.replaceState(null, '', location.pathname + location.search);
-    });
+    const open = () =>
+      decodeShare(location.hash).then((s) => {
+        if (!s) return;
+        setCode(s.code);
+        setStdin(s.stdin ?? '');
+        if (s.stdin) setShowStdin(true);
+        if (s.tab && (TABS as string[]).includes(s.tab)) setTab(s.tab as Tab);
+        setPlaying(false);
+        setAwaitingReveal(false);
+        setIndexRaw(s.step ?? 0); // the run that follows keeps this step (it only clamps it)
+        history.replaceState(null, '', location.pathname + location.search);
+      });
+    open();
+    window.addEventListener('hashchange', open);
+    return () => window.removeEventListener('hashchange', open);
   }, []);
 
   const share = async () => {
     const hash = await encodeShare({ code, stdin: stdin || undefined, tab, step: index || undefined });
     const url = location.origin + location.pathname + location.search + hash;
-    try {
-      await navigator.clipboard.writeText(url);
+    // The clipboard can be refused, or wait forever on a permission prompt: give it a moment, then
+    // show the link ready to copy by hand.
+    const copied = await Promise.race([
+      navigator.clipboard?.writeText(url).then(() => true, () => false) ?? Promise.resolve(false),
+      new Promise<boolean>((r) => setTimeout(() => r(false), 1500)),
+    ]);
+    if (copied) {
       setShareNote('Link copied');
-    } catch {
-      history.replaceState(null, '', hash); // no clipboard access: leave it in the address bar to copy by hand
-      setShareNote('Link is in the address bar');
+      setTimeout(() => setShareNote(null), 2500);
+    } else {
+      setShareUrl(url);
     }
-    setTimeout(() => setShareNote(null), 2500);
   };
 
   // Version + "update available" (the server asks GitHub Releases; see AppInfo.java).
@@ -280,6 +291,8 @@ export default function App() {
   const layout = useMemo(() => buildLayout(steps, codeSeg), [steps, codeSeg]);
   const counts = useMemo(() => (showCounts ? lineCounts(steps, index) : null), [showCounts, steps, index]);
   const step = steps[index];
+  const born = useMemo(() => firstSeen(steps), [steps]);
+  const changes = useMemo(() => stepChanges(steps[index - 1], steps[index], (id) => born.get(id) === index), [steps, index, born]);
   const output = step ? stdout.slice(0, step.out) : '';
   const atEnd = index === steps.length - 1;
 
@@ -338,6 +351,19 @@ export default function App() {
             >
               {shareNote ? <Check size={15} /> : <Share2 size={15} />} <span className="lbl">{shareNote ?? 'Share'}</span>
             </button>
+          )}
+          {shareUrl && (
+            <input
+              className="share-url"
+              readOnly
+              autoFocus
+              value={shareUrl}
+              aria-label="Share link: copy it with Ctrl+C"
+              title="Copy this link (Ctrl+C / ⌘C). Click elsewhere to close."
+              onFocus={(e) => e.target.select()}
+              onBlur={() => setShareUrl(null)}
+              onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.blur()}
+            />
           )}
         </div>
 
@@ -429,6 +455,22 @@ export default function App() {
             speed={speed}
             setSpeed={setSpeed}
           />
+          {tab !== 'growth' && step && (
+            <div className="changes" aria-live="polite" title="What the last step changed">
+              <span className="changes-label">{index === 0 ? 'start' : 'changed'}</span>
+              {index === 0 ? (
+                <span className="muted">main() is about to run</span>
+              ) : changes.length ? (
+                changes.map((c, i) => (
+                  <span className="change" key={i}>
+                    {c}
+                  </span>
+                ))
+              ) : (
+                <span className="muted">nothing (a condition or jump)</span>
+              )}
+            </div>
+          )}
           <nav className="tabs" role="tablist">
             {(
               [
@@ -463,7 +505,7 @@ export default function App() {
           )}
 
           <div className="view-scroll">
-            {tab === 'memory' && <MemoryView step={step} prev={steps[index - 1]} indexNames={indexNames} />}
+            {tab === 'memory' && <MemoryView step={step} prev={steps[index - 1]} indexNames={indexNames} steps={steps} index={index} />}
             {tab === 'map' && <MemoryMap step={step} prev={steps[index - 1]} layout={layout} />}
             {tab === 'algo' && <AlgoView steps={steps} index={index} code={code} project={project} stdin={stdin} samples={samples} />}
             {tab === 'space' && <AddressSpace steps={steps} step={step} prev={steps[index - 1]} index={index} layout={layout} />}

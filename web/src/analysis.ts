@@ -169,3 +169,129 @@ export function bestFit(points: { n: number; count: number }[]) {
   if (spread <= 1) return { name: 'O(1)', a: points[0].count, c: 0, err: 0, f: () => 0 };
   return best;
 }
+
+// ------------------------------------------------------------ what changed between two steps
+
+const MAX_CHANGES = 6;
+
+/** The name a step's code uses for a heap object: the nearest frame's variable that points at it. */
+function nameFor(step: Step, id: number): string | null {
+  for (let i = step.stack.length - 1; i >= 0; i--) {
+    const l = step.stack[i].locals.find((x) => x.v.k === 'r' && x.v.id === id && x.name !== 'this');
+    if (l) return l.name;
+  }
+  const self = step.stack[step.stack.length - 1]?.locals.find((x) => x.name === 'this' && x.v.k === 'r' && x.v.id === id);
+  return self ? 'this' : null;
+}
+
+const sameValue = (a: Value | undefined, b: Value | undefined) => JSON.stringify(a) === JSON.stringify(b);
+
+/** "3 → 6", or for references "→ another Node" (ids mean nothing to students). */
+function changeText(name: string, from: Value, to: Value, prevHeap: Step['heap'], heap: Step['heap']): string {
+  if (from.k === 'r' && to.k === 'r') return `${name} → another ${shortValue(to, heap)}`;
+  return `${name}: ${shortValue(from, prevHeap)} → ${shortValue(to, heap)}`;
+}
+
+/**
+ * A short, plain-words list of what happened between `prev` and `step`: calls made and returned,
+ * variables set or changed, objects created, array cells / fields / map entries written.
+ */
+export function stepChanges(prev: Step | undefined, step: Step | undefined, isNew?: (id: number) => boolean): string[] {
+  if (!prev || !step) return [];
+  const out: string[] = [];
+  const prevFrames = new Map(prev.stack.map((f) => [f.id, f]));
+  const nowFrames = new Set(step.stack.map((f) => f.id));
+
+  // calls that returned
+  for (const f of prev.stack) {
+    if (nowFrames.has(f.id)) continue;
+    out.push(f.ret !== undefined && f.ret !== null ? `${f.method}() returned ${shortValue(f.ret, prev.heap)}` : `${f.method}() returned`);
+  }
+  for (const f of step.stack) {
+    const before = prevFrames.get(f.id);
+    if (!before) {
+      const args = f.locals.filter((l) => l.name !== 'this').map((l) => `${l.name}=${shortValue(l.v, step.heap)}`);
+      out.push(`call ${f.method}(${args.join(', ')})`);
+      continue;
+    }
+    const old = new Map(before.locals.map((l) => [l.name, l.v]));
+    for (const l of f.locals) {
+      const was = old.get(l.name);
+      if (!was) out.push(`${l.name} = ${shortValue(l.v, step.heap)}`);
+      else if (!sameValue(was, l.v)) out.push(changeText(l.name, was, l.v, prev.heap, step.heap));
+    }
+  }
+
+  // static fields
+  const prevStatics = new Map((prev.statics ?? []).flatMap((c) => c.fields.map((f) => [`${c.cls}.${f.name}`, f.v] as [string, Value])));
+  for (const c of step.statics ?? []) {
+    for (const f of c.fields) {
+      const key = `${c.cls}.${f.name}`;
+      const was = prevStatics.get(key);
+      if (was && !sameValue(was, f.v)) out.push(changeText(key, was, f.v, prev.heap, step.heap));
+    }
+  }
+
+  // heap objects: new ones, and writes into existing ones. Without `isNew` (see firstSeen): the debugger
+  // numbers objects in the order it first sees them, so an id above every earlier one is a new object.
+  const newestBefore = Math.max(0, ...Object.keys(prev.heap).map(Number));
+  const created = isNew ?? ((id: number) => id > newestBefore);
+  for (const [key, obj] of Object.entries(step.heap)) {
+    const id = Number(key);
+    const before = prev.heap[key];
+    const name = nameFor(step, id) ?? obj.type;
+    if (!before) {
+      if (created(id)) {
+        out.push(obj.kind === 'array' ? `new ${obj.type.replace(/\[\]$/, '')}[${obj.len}]` : `new ${obj.type}`);
+      }
+      continue;
+    }
+    if ((obj.kind === 'array' || obj.kind === 'list') && (before.kind === 'array' || before.kind === 'list')) {
+      if (obj.len !== before.len) out.push(`${name} size ${before.len} → ${obj.len}`);
+      else obj.items.forEach((v, i) => !sameValue(before.items[i], v) && out.push(`${name}[${i}] = ${shortValue(v, step.heap)}`));
+    } else if (obj.kind === 'object' && before.kind === 'object') {
+      const old = new Map(before.fields.map((f) => [f.name, f.v]));
+      for (const f of obj.fields) {
+        const was = old.get(f.name);
+        if (was && !sameValue(was, f.v)) out.push(changeText(`${name}.${f.name}`, was, f.v, prev.heap, step.heap));
+      }
+    } else if (obj.kind === 'map' && before.kind === 'map') {
+      const old = new Map(before.entries.map((e) => [JSON.stringify(e.k), e.v]));
+      for (const e of obj.entries) {
+        const was = old.get(JSON.stringify(e.k));
+        if (!was || !sameValue(was, e.v)) out.push(`${name}[${shortValue(e.k, step.heap)}] = ${shortValue(e.v, step.heap)}`);
+      }
+      if (obj.len < before.len) out.push(`${name} size ${before.len} → ${obj.len}`);
+    }
+  }
+
+  if (out.length > MAX_CHANGES) return [...out.slice(0, MAX_CHANGES - 1), `+${out.length - MAX_CHANGES + 1} more`];
+  return out;
+}
+
+/** The step where each heap object first appears (objects can drop out of view and come back). */
+export function firstSeen(steps: Step[]): Map<number, number> {
+  const out = new Map<number, number>();
+  steps.forEach((s, i) => Object.keys(s.heap).forEach((k) => out.has(Number(k)) || out.set(Number(k), i)));
+  return out;
+}
+
+// ------------------------------------------------------------ a variable's history
+
+/**
+ * The numeric values a frame's variable has held, from the call's start up to step `upto`
+ * (never later, so it can't give away what happens next in Predict mode). Empty if it isn't a number.
+ */
+export function valueHistory(steps: Step[], frameId: number, name: string, upto: number): { step: number; v: number }[] {
+  const out: { step: number; v: number }[] = [];
+  for (let i = 0; i <= upto && i < steps.length; i++) {
+    const f = steps[i].stack.find((x) => x.id === frameId);
+    const l = f?.locals.find((x) => x.name === name);
+    if (!l) continue;
+    if (l.v.k !== 'p') return [];
+    const n = Number(l.v.v);
+    if (!Number.isFinite(n)) return []; // booleans, chars
+    out.push({ step: i, v: n });
+  }
+  return out;
+}
