@@ -56,6 +56,7 @@ tasks.named<JavaExec>("run") {
 }
 
 tasks.test {
+    dependsOn("webTest") // the web page's unit tests (web/test) run with the Java ones
     useJUnitPlatform()
     workingDir = rootDir // the tests run the programs in samples/
     // A temp folder with a space in its name, like many Windows user folders ("C:\Users\Jo Smith"),
@@ -109,6 +110,17 @@ val buildWeb = tasks.register<Exec>("buildWeb") {
     inputs.files(fileTree("web/public"))
     inputs.files("web/index.html", "web/package.json", "web/vite.config.ts", "web/tsconfig.json")
     outputs.dir("web/dist")
+}
+
+// Node's built-in test runner runs the .ts tests directly (Node 22.18+ strips the types), so no test
+// library is needed. They only import type-only modules, so npm install isn't needed either.
+val webTest = tasks.register<Exec>("webTest") {
+    description = "Runs the web page's unit tests (web/test)"
+    workingDir = file("web")
+    commandLine("node", "--test", "test/**/*.test.ts")
+    inputs.dir("web/src")
+    inputs.dir("web/test")
+    outputs.upToDateWhen { false }
 }
 
 // One self-contained jar: our classes + FlatLaf + the built web page (served from inside the jar).

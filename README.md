@@ -32,7 +32,8 @@ Edits to `web/src` reload instantly. After editing Java code, restart `./gradlew
 
 | Command | What it does |
 |---|---|
-| `./gradlew test` | Runs the test suite: every sample program, the edge cases, and autocomplete. |
+| `./gradlew test` | Runs the test suite: every sample program, the edge cases, autocomplete, and the web page's unit tests. |
+| `cd web && npm test` | Runs only the web page's unit tests (`web/test/`), with Node's built-in test runner. |
 | `./gradlew jar` | Builds `build/libs/javalens.jar`, one file with the web page inside. Run it with `java -jar` if a JDK is installed. |
 | `./gradlew portable` | Builds the unzip-and-run app for this OS, with Java bundled, into `build/dist`. |
 | `./gradlew vscodeExtension` | Builds the VS Code extension into `build/dist/javalens-<version>.vsix` (the server jar goes inside; the extension's code is in `vscode/`). |
@@ -57,6 +58,7 @@ Release builds check that repo's Releases page and show an **Update available** 
 |---|---|
 | `server/src/main/java/javalens/` | The Java side: HTTP API, compiler, tracer, autocomplete, app window |
 | `server/src/test/java/javalens/` | Tests |
+| `web/test/` | Unit tests for the trace analysis behind the views |
 | `web/` | The page: React + Monaco editor, built with Vite |
 | `vscode/` | The VS Code extension: starts the server with the user's JDK and shows the page in a panel |
 | `samples/` | Lesson programs. They appear in the Examples menu and are also run by the tests. |
