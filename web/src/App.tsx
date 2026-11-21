@@ -9,11 +9,12 @@ import CallTree from './CallTree';
 import Growth from './Growth';
 import Timeline from './Timeline';
 import {
-  AArrowDown, AArrowUp, ArrowDownUp, Binary, BookOpen, Bug, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers, Lightbulb,
-  LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, Presentation, RectangleVertical, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
+  AArrowDown, AArrowUp, ArrowDownUp, Binary, BookOpen, Bug, Check, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers, Lightbulb,
+  LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, Presentation, RectangleVertical, Share2, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
 } from 'lucide-react';
 import { indexVariableNames, lineCounts } from './analysis';
 import { defaultSample, samples } from './samples';
+import { decodeShare, encodeShare } from './share';
 import type { CodeClass, Diagnostic, EndReason, Project, RunResult, Step } from './types';
 
 const END_MESSAGES: Record<EndReason, string | null> = {
@@ -48,6 +49,7 @@ const baseName = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 
 type Status = { kind: 'idle' | 'running' | 'ok' | 'compile' | 'error'; text: string };
 type Tab = 'memory' | 'map' | 'space' | 'algo' | 'tree' | 'growth';
+const TABS: Tab[] = ['memory', 'map', 'space', 'algo', 'tree', 'growth'];
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -100,6 +102,35 @@ export default function App() {
   const [awaitingReveal, setAwaitingReveal] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const [appVersion, setAppVersion] = useState<{ version: string; latest: string | null; url: string | null } | null>(null);
+  const [shareNote, setShareNote] = useState<string | null>(null);
+
+  // Opened from a share link (#s=...): load its program, input, tab and step, then tidy the address
+  // bar so a refresh keeps later edits instead of going back to the shared version.
+  useEffect(() => {
+    if (IN_VSCODE) return;
+    decodeShare(location.hash).then((s) => {
+      if (!s) return;
+      setCode(s.code);
+      setStdin(s.stdin ?? '');
+      if (s.stdin) setShowStdin(true);
+      if (s.tab && (TABS as string[]).includes(s.tab)) setTab(s.tab as Tab);
+      setIndexRaw(s.step ?? 0); // the run that follows keeps this step (it only clamps it)
+      history.replaceState(null, '', location.pathname + location.search);
+    });
+  }, []);
+
+  const share = async () => {
+    const hash = await encodeShare({ code, stdin: stdin || undefined, tab, step: index || undefined });
+    const url = location.origin + location.pathname + location.search + hash;
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareNote('Link copied');
+    } catch {
+      history.replaceState(null, '', hash); // no clipboard access: leave it in the address bar to copy by hand
+      setShareNote('Link is in the address bar');
+    }
+    setTimeout(() => setShareNote(null), 2500);
+  };
 
   // Version + "update available" (the server asks GitHub Releases; see AppInfo.java).
   useEffect(() => {
@@ -299,6 +330,15 @@ export default function App() {
             </span>
             Live
           </label>
+          {!IN_VSCODE && (
+            <button
+              onClick={share}
+              className={shareNote ? 'on' : ''}
+              title="Copy a link that reopens this program, its input, this tab and this step"
+            >
+              {shareNote ? <Check size={15} /> : <Share2 size={15} />} <span className="lbl">{shareNote ?? 'Share'}</span>
+            </button>
+          )}
         </div>
 
         <div className="spacer" />

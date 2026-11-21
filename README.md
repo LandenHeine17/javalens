@@ -76,6 +76,7 @@ Release builds check that repo's Releases page and show an **Update available** 
 - **Input** opens a text box for what the program reads through `Scanner`.
 - **Examples** lists every `.java` file in `samples/`. To add a lesson, drop in a new file; the page reloads to pick it up.
 - **Click a line number** to jump to the next time that line runs.
+- **Share** copies a link that reopens the program, its input, the open tab and the current step. Everything is packed into the link itself (after the `#`), so nothing is uploaded. The link opens wherever JavaLens runs at the same address, for example `http://127.0.0.1:7070/` on another computer with JavaLens open.
 
 ### Views (tabs on the right)
 
