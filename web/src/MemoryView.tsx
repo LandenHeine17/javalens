@@ -1,12 +1,14 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { Frame, HeapObj, Step, Value } from './types';
 import { valueHistory } from './analysis';
+import { cellText, gridPointers, gridRows, type GridVars } from './grid';
 
 /**
  * Memory diagram: the call stack on the left (newest call on top), objects on the heap on the right,
  * and SVG arrows for every reference. Self-referencing classes get special layouts:
  *   one field of its own type  (Node next)        -> drawn as a left-to-right linked list
  *   two+ fields of its own type (Node left, right) -> drawn as a tree
+ * and 2D arrays of simple values (int[][], char[][]) are drawn as one grid.
  */
 interface Props {
   step: Step | undefined;
@@ -14,13 +16,14 @@ interface Props {
   indexNames: Set<string>; // variables used as array indexes in the code (i, j, mid...)
   steps?: Step[]; // the whole run and the current position: for a variable's value history on hover
   index?: number;
+  gridVars?: Map<string, GridVars>; // which variables index each 2D array's rows and columns (from the code)
 }
 
 type Hover = (id: number | null) => void;
 const MAX_INDENT = 8; // deeper calls stop indenting so deep recursion doesn't run off the screen
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-export default function MemoryView({ step, prev, indexNames, steps, index }: Props) {
+export default function MemoryView({ step, prev, indexNames, steps, index, gridVars }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [arrows, setArrows] = useState<{ d: string; to: number; key: string }[]>([]);
   const [hovered, setHovered] = useState<number | null>(null);
@@ -81,7 +84,7 @@ export default function MemoryView({ step, prev, indexNames, steps, index }: Pro
   const prevFrames = new Map((prev?.stack ?? []).map((f) => [f.id, f]));
   const hiddenArgs = hiddenArgsId(step);
   const pointers = indexPointers(step, indexNames);
-  const ctx: Ctx = { step, prev, hovered, onHover: setHovered, pointers, steps, index };
+  const ctx: Ctx = { step, prev, hovered, onHover: setHovered, pointers, steps, index, gridVars: gridVars ?? new Map() };
 
   return (
     <div className="memory" ref={wrapRef}>
@@ -133,6 +136,7 @@ interface Ctx {
   pointers: Map<number, Map<number, string[]>>; // array id -> index -> variable names
   steps?: Step[];
   index?: number;
+  gridVars: Map<string, GridVars>;
 }
 
 // ------------------------------------------------------------ grouping the heap
@@ -149,8 +153,12 @@ function selfFields(obj: HeapObj): string[] {
 }
 
 function heapGroups(step: Step, hiddenArgs: number | null): Group[] {
-  const order = heapOrder(step).filter((id) => id !== hiddenArgs);
   const heap = step.heap;
+  // A 2D array's rows are drawn inside its grid, not as boxes of their own.
+  const rowsOfGrids = new Set<number>();
+  const all = heapOrder(step);
+  for (const id of all) gridRows(heap, id)?.forEach((r) => r !== null && rowsOfGrids.add(r));
+  const order = all.filter((id) => id !== hiddenArgs && !rowsOfGrids.has(id));
 
   // Objects pointed to by another object of the same type are not heads/roots.
   const pointedBySame = new Set<number>();
@@ -427,6 +435,9 @@ function HeapBox({ id, ctx, downFields, compact }: { id: number; ctx: Ctx; downF
   const isNew = !prevObj;
   const box = 'heap-obj' + (ctx.hovered === id ? ' hot' : '') + (isNew ? ' pushed' : '') + (compact ? ' compact' : '');
 
+  const rows = obj.kind === 'array' ? gridRows(ctx.step.heap, id) : null;
+  if (rows) return <GridBox id={id} rows={rows} ctx={ctx} className={box} />;
+
   if (obj.kind === 'array' || obj.kind === 'list') {
     const prevItems = prevObj && 'items' in prevObj ? prevObj.items : [];
     const role = obj.kind === 'list' ? obj.role ?? 'list' : 'array';
@@ -551,6 +562,80 @@ function HeapBox({ id, ctx, downFields, compact }: { id: number; ctx: Ctx; downF
     <div className={box} data-obj={id}>
       <div className="obj-type">{obj.type}</div>
       <div className="obj-meta">(library object)</div>
+    </div>
+  );
+}
+
+/**
+ * A 2D array as a grid: rows down, columns across. The running method's row variable (i) points at a
+ * row from the left, its column variable (j) at a column from above, and the cell where they cross
+ * is highlighted. Each row carries its own heap id, so a reference to one row points at that row.
+ */
+function GridBox({ id, rows, ctx, className }: { id: number; rows: (number | null)[]; ctx: Ctx; className: string }) {
+  const { step, prev } = ctx;
+  const obj = step.heap[id] as Extract<HeapObj, { kind: 'array' }>;
+  const isNew = !prev?.heap[id];
+  const lens = rows.map((r) => (r === null ? 0 : (step.heap[r] as { len: number }).len));
+  const width = Math.max(...lens);
+  const ptr = gridPointers(step, id, ctx.gridVars);
+  const colCount = width + (ptr.cols.has(width) ? 1 : 0); // a column variable one past the end (loop finished)
+  const rowCount = rows.length + (ptr.rows.has(rows.length) ? 1 : 0);
+  const ragged = lens.some((l) => l !== width);
+
+  return (
+    <div className={className + ' grid-obj'} data-obj={id}>
+      <div className="obj-type">
+        {obj.type} <span className="obj-meta">{rows.length} × {ragged ? `up to ${width}` : width}</span>
+      </div>
+      <table className="grid">
+        <thead>
+          <tr>
+            <th className="grid-corner" />
+            {Array.from({ length: colCount }, (_, c) => (
+              <th key={c} className={'grid-col' + (ptr.cols.has(c) ? ' pointed' : '') + (c >= width ? ' past-end' : '')}>
+                {ptr.cols.has(c) && <span className="grid-ptr">{ptr.cols.get(c)!.join(', ')} ↓</span>}
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: rowCount }, (_, r) => {
+            const rid = rows[r];
+            const row = rid === null || rid === undefined ? undefined : (step.heap[rid] as Extract<HeapObj, { kind: 'array' }>);
+            const prevRow = rid === null || rid === undefined || isNew ? undefined : prev?.heap[rid];
+            const prevItems = prevRow && 'items' in prevRow ? prevRow.items : undefined;
+            const rowPtr = ptr.rows.get(r);
+            return (
+              <tr key={r} data-obj={rid ?? undefined} className={rowPtr ? 'pointed' : undefined}>
+                <th className={'grid-row' + (r >= rows.length ? ' past-end' : '')}>
+                  {rowPtr && <span className="grid-ptr">{rowPtr.join(', ')} →</span>}
+                  {r}
+                </th>
+                {r >= rows.length ? (
+                  <td colSpan={colCount} className="grid-none" />
+                ) : !row ? (
+                  <td colSpan={colCount} className="grid-none">null</td>
+                ) : (
+                  Array.from({ length: colCount }, (_, c) => {
+                    if (c >= row.items.length) return <td key={c} className="grid-none" />;
+                    const v = row.items[c];
+                    const cls = [
+                      prevItems && !same(prevItems[c], v) ? 'changed' : '',
+                      rowPtr && ptr.cols.has(c) ? 'current' : rowPtr || ptr.cols.has(c) ? 'cross' : '',
+                    ].join(' ').trim();
+                    return (
+                      <td key={c} className={cls || undefined}>
+                        {cellText(v)}
+                      </td>
+                    );
+                  })
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

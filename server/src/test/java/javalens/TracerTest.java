@@ -51,6 +51,7 @@ class TracerTest {
             CollectionsDemo | 3 Ana {not=1, be=2, or=1, to=2}\\n
             BigO            | 8 -> 64\\n
             MemoryModel     | false true true\\n52\\n
+            GridPaths       | 10 paths\\n
             """)
     void everySampleRunsToTheEnd(String name, String expectedStdout) throws Exception {
         String json = trace(sample(name), "");

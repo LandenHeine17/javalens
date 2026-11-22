@@ -15,6 +15,7 @@ import {
 import { firstSeen, indexVariableNames, lineCounts, stepChanges } from './analysis';
 import { defaultSample, samples } from './samples';
 import { decodeShare, encodeShare } from './share';
+import { gridIndexVars } from './grid';
 import type { CodeClass, Diagnostic, EndReason, Project, RunResult, Step } from './types';
 
 const END_MESSAGES: Record<EndReason, string | null> = {
@@ -288,6 +289,7 @@ export default function App() {
   useEffect(() => toHost({ type: 'diagnostics', diagnostics }), [diagnostics]);
 
   const indexNames = useMemo(() => indexVariableNames(code), [code]);
+  const gridVars = useMemo(() => gridIndexVars([code, ...(project?.files.map((f) => f.code) ?? [])].join('\n')), [code, project]);
   const layout = useMemo(() => buildLayout(steps, codeSeg), [steps, codeSeg]);
   const counts = useMemo(() => (showCounts ? lineCounts(steps, index) : null), [showCounts, steps, index]);
   const step = steps[index];
@@ -505,7 +507,7 @@ export default function App() {
           )}
 
           <div className="view-scroll">
-            {tab === 'memory' && <MemoryView step={step} prev={steps[index - 1]} indexNames={indexNames} steps={steps} index={index} />}
+            {tab === 'memory' && <MemoryView step={step} prev={steps[index - 1]} indexNames={indexNames} steps={steps} index={index} gridVars={gridVars} />}
             {tab === 'map' && <MemoryMap step={step} prev={steps[index - 1]} layout={layout} />}
             {tab === 'algo' && <AlgoView steps={steps} index={index} code={code} project={project} stdin={stdin} samples={samples} />}
             {tab === 'space' && <AddressSpace steps={steps} step={step} prev={steps[index - 1]} index={index} layout={layout} />}

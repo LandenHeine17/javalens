@@ -84,6 +84,7 @@ Release builds check that repo's Releases page and show an **Update available** 
 
 - **Memory:** the call stack beside the heap, with an arrow for every reference.
   - **Arrays:** the cells show `↑ i`, `↑ j` or `↑ mid` under the positions the current method's index variables point at.
+  - **2D arrays** (`int[][]`, `char[][]`, `String[][]`) are drawn as one grid. The row variable (`i`) points at a row, the column variable (`j`) at a column, and the cell where they meet is outlined, so filling a DP table reads naturally. Try the **GridPaths** example.
   - **Linked lists:** a class with one field of its own type (`Node next`) is drawn left to right.
   - **Binary trees:** a class with two such fields (`Node left, right`) is drawn as a tree.
   - **Collections:** `Stack`, `ArrayDeque`, `LinkedList`, `ArrayList`, `HashMap`, `TreeMap`, `HashSet`, `List.of` and similar are shown as their contents. A Stack has its top marked, and a queue has its front and back marked.
