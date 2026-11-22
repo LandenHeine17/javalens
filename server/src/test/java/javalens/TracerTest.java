@@ -52,6 +52,7 @@ class TracerTest {
             BigO            | 8 -> 64\\n
             MemoryModel     | false true true\\n52\\n
             GridPaths       | 10 paths\\n
+            Exceptions      | checked 42\\nage 42\\nchecked abc\\nnot a number: abc\\nchecked -5\\nage can't be negative: -5\\n
             """)
     void everySampleRunsToTheEnd(String name, String expectedStdout) throws Exception {
         String json = trace(sample(name), "");
@@ -223,6 +224,39 @@ class TracerTest {
     void crashesAreReportedOnTheStep() throws Exception {
         String json = trace("public class Crash { public static void main(String[] a) { int[] b = new int[2]; b[5] = 1; } }", "");
         assertTrue(json.contains("ArrayIndexOutOfBoundsException"));
+    }
+
+    @Test
+    void caughtExceptionsSayWhereTheyAreCaught() throws Exception {
+        String json = trace(sample("Exceptions"), "");
+        // parseAge's NumberFormatException first goes to checkedAge's finally block (line 17)...
+        assertTrue(json.contains("\"exception\":\"java.lang.NumberFormatException: For input string: \\\"abc\\\"\",\"caught\":true,\"catchLine\":17"), json);
+        // ...which throws it on to main's catch (line 27)
+        assertTrue(json.contains("\"caught\":true,\"catchLine\":27,\"catchFrame\":1"), json);
+        // the last one isn't caught: no catch info, and the run ends there
+        Matcher last = Pattern.compile("\"exception\":\"java.lang.ArrayIndexOutOfBoundsException[^\"]*\"(,\"caught\")?").matcher(json);
+        assertTrue(last.find(), json);
+        assertNull(last.group(1), "the out-of-bounds exception is not caught");
+    }
+
+    @Test
+    void exceptionsTheJdkThrowsAndCatchesItselfAreLeftOut() throws Exception {
+        // Class loading and Integer.parseInt's internals throw and catch exceptions inside the JDK;
+        // only the one student code catches should appear.
+        String json = trace("""
+                public class Main {
+                    public static void main(String[] args) {
+                        java.util.List<String> xs = new java.util.ArrayList<>(java.util.List.of("1", "x"));
+                        int ok = 0;
+                        for (String s : xs) {
+                            try { ok += Integer.parseInt(s); } catch (NumberFormatException e) { ok--; }
+                        }
+                        System.out.println(ok);
+                    }
+                }
+                """, "");
+        assertEquals("\"0\\n\"", stdoutOf(json));
+        assertEquals(1, json.split("\"kind\":\"exception\"", -1).length - 1, json);
     }
 
     @Test

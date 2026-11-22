@@ -44,7 +44,11 @@ export interface Step {
   stack: Frame[]; // bottom (main) -> top
   heap: Record<string, HeapObj>;
   statics?: StaticClass[]; // static fields of the user's classes that have been initialized
-  exception?: string;
+  exception?: string; // "java.lang.ArithmeticException: / by zero" on an exception step
+  caught?: boolean; // something catches it (else the program stops here)
+  catchLine?: number; // where student code catches it: the catch (or finally) it jumps to...
+  catchFile?: string; // ...in this file, when it isn't the main file
+  catchFrame?: number; // ...in this call; every call above it ends early (unwinds)
   hiddenFrames?: number;
 }
 

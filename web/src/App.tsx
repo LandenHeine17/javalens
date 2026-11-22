@@ -12,7 +12,7 @@ import {
   AArrowDown, AArrowUp, ArrowDownUp, Binary, BookOpen, Bug, Check, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers, Lightbulb,
   LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, Presentation, RectangleVertical, Share2, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
 } from 'lucide-react';
-import { firstSeen, indexVariableNames, lineCounts, stepChanges } from './analysis';
+import { exceptionName, firstSeen, handlerKind, indexVariableNames, lineCounts, stepChanges, unwoundFrames } from './analysis';
 import { defaultSample, samples } from './samples';
 import { decodeShare, encodeShare } from './share';
 import { gridIndexVars } from './grid';
@@ -47,6 +47,21 @@ export function projectFields(project: Project | null): Record<string, string> {
   return out;
 }
 const baseName = (p: string) => p.slice(p.lastIndexOf('/') + 1);
+
+/** Where an exception goes from here, in plain words (the banner under the tabs). */
+function exceptionPath(step: Step, code: string): string {
+  const name = exceptionName(step.exception);
+  const ended = step.stack.filter((f) => unwoundFrames(step).has(f.id)).reverse().map((f) => f.method + '()');
+  const endsEarly = ended.length ? ` ${ended.join(', ')} ${ended.length === 1 ? 'ends' : 'end'} early, without returning.` : '';
+  if (!step.caught) return `Nothing catches this ${name}, so the program stops here.`;
+  if (step.catchLine === undefined) return `Library code catches it.`;
+  const where = `line ${step.catchLine}${step.catchFile ? ` of ${baseName(step.catchFile)}` : ''}`;
+  const catcher = step.stack.find((f) => f.id === step.catchFrame)?.method;
+  const inMethod = catcher ? ` in ${catcher}()` : '';
+  if (!step.catchFile && handlerKind(code, step.catchLine) === 'finally')
+    return `It jumps to the finally block at ${where}${inMethod}; after that block runs, the exception carries on.${endsEarly}`;
+  return `Caught at ${where}${inMethod}.${endsEarly}`;
+}
 
 type Status = { kind: 'idle' | 'running' | 'ok' | 'compile' | 'error'; text: string };
 type Tab = 'memory' | 'map' | 'space' | 'algo' | 'tree' | 'growth';
@@ -496,8 +511,13 @@ export default function App() {
             )}
           </nav>
           {tab !== 'growth' && step?.exception && (
-            <div className="banner error">
-              <Bug size={16} /> {step.exception}
+            <div className={'banner ' + (step.caught ? 'catch' : 'error')}>
+              <Bug size={16} />
+              <span>
+                <b>{step.exception}</b>
+                <br />
+                {exceptionPath(step, code)}
+              </span>
             </div>
           )}
           {tab !== 'growth' && atEnd && END_MESSAGES[end] && (

@@ -138,22 +138,29 @@ public final class Tracer {
                         for (String ex : EXCLUDED) exit.addClassExclusionFilter(ex);
                         exit.enable();
 
-                        ExceptionRequest exc = erm.createExceptionRequest(null, false, true);
+                        // Caught exceptions too, so a try/catch can be watched; filtered below to the ones
+                        // student code throws or catches (the JDK throws and catches plenty internally).
+                        ExceptionRequest exc = erm.createExceptionRequest(null, true, true);
                         exc.addThreadFilter(t);
                         exc.enable();
 
-                        snapshot(t, "line", null, null, out, err);
+                        snapshot(t, "line", null, null, null, out, err);
                     } else if (e instanceof StepEvent se && countOnly) {
                         if (++counted % 2000 == 0) { drainQuietly(out); drainQuietly(err); }
                     } else if (e instanceof StepEvent se) {
-                        snapshot(se.thread(), "line", null, null, out, err);
+                        snapshot(se.thread(), "line", null, null, null, out, err);
                     } else if (e instanceof MethodExitEvent me) {
                         if (isUserCode(me.method().declaringType().name()) && !me.method().isSynthetic()) {
-                            snapshot(me.thread(), "return", me.returnValue(), null, out, err);
+                            snapshot(me.thread(), "return", me.returnValue(), null, null, out, err);
                             topFramePopped = true;
                         }
                     } else if (e instanceof ExceptionEvent ee) {
-                        snapshot(ee.thread(), "exception", null, ee.exception(), out, err);
+                        Location caughtAt = ee.catchLocation(); // null: nothing catches it, the program stops
+                        boolean thrownByUser = isUserCode(ee.location().declaringType().name());
+                        boolean caughtByUser = caughtAt != null && isUserCode(caughtAt.declaringType().name());
+                        if (caughtAt == null || thrownByUser || caughtByUser) {
+                            snapshot(ee.thread(), "exception", null, ee.exception(), caughtAt, out, err);
+                        }
                     }
                 }
                 if (steps.size() >= MAX_STEPS || counted >= COUNT_MAX_STEPS) { endReason = "step_limit"; break; }
@@ -199,7 +206,7 @@ public final class Tracer {
     // ---------------------------------------------------------------- snapshots
 
     private void snapshot(ThreadReference t, String kind, Value returnValue, ObjectReference exception,
-                          InputStream out, InputStream err) {
+                          Location caughtAt, InputStream out, InputStream err) {
         drainQuietly(out); drainQuietly(err);
         appendOutput();
 
@@ -281,6 +288,21 @@ public final class Tracer {
             Value detail = fieldValue(exception, "detailMessage");
             if (detail instanceof StringReference s) msg += ": " + s.value();
             sb.append(",\"exception\":").append(Json.str(msg));
+            if (caughtAt != null) {
+                sb.append(",\"caught\":true");
+                if (isUserCode(caughtAt.declaringType().name())) { // else library code catches it
+                    sb.append(",\"catchLine\":").append(caughtAt.lineNumber());
+                    String file = otherFile(caughtAt);
+                    if (file != null) sb.append(",\"catchFile\":").append(Json.str(file));
+                    // the nearest call running the catching method: every call above it is unwound
+                    for (int i = frames.size() - 1; i >= 0; i--) {
+                        if (frames.get(i).location().method().equals(caughtAt.method())) {
+                            sb.append(",\"catchFrame\":").append(ids.get(i));
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         String statics = statics(toVisit);
@@ -292,8 +314,12 @@ public final class Tracer {
 
     /** The frame's source file if it isn't the main file (e.g. "edu/unl/raikes/memory/models/Year.java"), else null. */
     private String otherFile(StackFrame f) {
+        return otherFile(f.location());
+    }
+
+    private String otherFile(Location loc) {
         try {
-            String path = f.location().sourcePath().replace('\\', '/');
+            String path = loc.sourcePath().replace('\\', '/');
             return path.equals(compiled.mainSource()) ? null : path;
         } catch (AbsentInformationException e) {
             return null;

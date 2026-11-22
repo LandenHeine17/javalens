@@ -289,6 +289,8 @@ main.no-code { grid-template-columns: 1fr; }
 /* ---------- editor line highlights */
 .line-current { background: rgba(124, 156, 255, 0.16); box-shadow: inset 3px 0 0 var(--accent); }
 .line-return { background: var(--green-soft); box-shadow: inset 3px 0 0 var(--green); }
+.line-catch { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.line-catch-note { color: var(--accent-text) !important; font-style: italic; opacity: 0.9; }
 .line-exception { background: rgba(255, 107, 107, 0.2); box-shadow: inset 3px 0 0 var(--error); }
 .line-caller { background: rgba(124, 156, 255, 0.05); }
 .glyph-current::before {
@@ -374,6 +376,9 @@ main.no-code { grid-template-columns: 1fr; }
   font-size: calc(var(--fs) * 0.85);
 }
 .banner.error { background: var(--error-soft); color: var(--error-text); border: 1px solid rgba(255, 107, 107, 0.25); }
+.banner.catch { background: var(--accent-soft); color: var(--text); border: 1px solid rgba(124, 156, 255, 0.3); }
+.banner.catch svg, .banner.error svg { flex: none; align-self: flex-start; margin-top: 2px; }
+.banner.catch b { color: var(--error-text); }
 .banner.warn { background: var(--warn-soft); color: var(--warn); border: 1px solid rgba(245, 184, 74, 0.25); }
 
 .share-url {
@@ -514,6 +519,11 @@ main.no-code { grid-template-columns: 1fr; }
 }
 .pill.running { color: var(--accent-text); background: var(--accent-soft); }
 .pill.returning { color: var(--green); background: var(--green-soft); }
+.pill.unwinding { color: var(--error-text); background: var(--error-soft); }
+.pill.catching { color: var(--accent-text); background: var(--accent-soft); }
+.frame.unwinding { border-color: rgba(255, 107, 107, 0.45); box-shadow: 0 0 0 3px var(--error-soft); }
+.frame.unwinding .method { color: var(--error-text); text-decoration: line-through; text-decoration-thickness: 1px; }
+.frame.catching { border-color: var(--accent); }
 .called-from { color: var(--faint); font: 0.72em var(--sans); margin-bottom: 6px; }
 .called-from b { color: var(--muted); font-weight: 600; }
 .no-locals { color: var(--faint); font: italic 0.78em var(--sans); padding: 2px 0; }
@@ -717,6 +727,8 @@ table.grid { border-collapse: separate; border-spacing: 0; font-family: var(--mo
 .tree-ret { fill: var(--muted); font-size: 0.85em; }
 .tree-node.done .tree-ret { fill: var(--green); font-weight: 700; }
 .tree-node.done .tree-label { fill: var(--muted); }
+.tree-node.threw rect { stroke: var(--error); stroke-dasharray: 4 3; }
+.tree-node.done.threw .tree-ret { fill: var(--error-text); }
 
 /* ---------- growth / Big-O */
 .growth { padding: 14px 16px 28px; }

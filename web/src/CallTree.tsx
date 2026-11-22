@@ -27,12 +27,14 @@ export default function CallTree({ steps, index, onPick, fontSize }: Props) {
   const topId = step?.stack[step.stack.length - 1]?.id;
   const visible = (n: CallNode) => n.firstStep <= index;
   const visibleCount = [...nodes.values()].filter(visible).length;
-  const finished = [...nodes.values()].filter((n) => n.returnStep !== null && n.returnStep <= index).length;
+  const ended = [...nodes.values()].filter((n) => n.returnStep !== null && n.returnStep <= index);
+  const threw = ended.filter((n) => n.threw).length;
+  const finished = ended.length - threw;
 
   return (
     <div className="tree-wrap">
       <div className="tree-stats">
-        {visibleCount} call{visibleCount === 1 ? '' : 's'} so far · {finished} returned · deepest {layout.maxDepth + 1}{' '}
+        {visibleCount} call{visibleCount === 1 ? '' : 's'} so far · {finished} returned{threw ? ` · ${threw} ended by an exception` : ''} · deepest {layout.maxDepth + 1}{' '}
         levels
         {nodes.size > MAX_NODES && <span className="warn"> · showing the first {MAX_NODES} calls</span>}
       </div>
@@ -53,7 +55,7 @@ export default function CallTree({ steps, index, onPick, fontSize }: Props) {
         {layout.items.map(({ node, x, y }) => {
           if (!visible(node)) return null;
           const returned = node.returnStep !== null && node.returnStep <= index;
-          const cls = node.id === topId ? 'current' : onStack.has(node.id) ? 'active' : returned ? 'done' : 'done';
+          const cls = node.id === topId ? 'current' : onStack.has(node.id) ? 'active' : node.threw && returned ? 'done threw' : 'done';
           const label = `${node.method}(${node.args})`;
           return (
             <g
@@ -64,7 +66,8 @@ export default function CallTree({ steps, index, onPick, fontSize }: Props) {
             >
               <title>
                 {label}
-                {returned && node.ret !== undefined ? ` returned ${shortValue(node.ret, steps[node.returnStep!].heap)}` : ''}
+                {returned && node.threw ? ` ended by ${node.threw}` : ''}
+                {returned && !node.threw && node.ret !== undefined ? ` returned ${shortValue(node.ret, steps[node.returnStep!].heap)}` : ''}
                 {' — click to jump to this call'}
               </title>
               <rect width={layout.w} height={layout.h} rx={8} />
@@ -72,7 +75,9 @@ export default function CallTree({ steps, index, onPick, fontSize }: Props) {
                 {fit(label, layout.chars)}
               </text>
               <text x={layout.w / 2} y={layout.h * 0.82} textAnchor="middle" className="tree-ret">
-                {returned
+                {returned && node.threw
+                  ? '✕ ' + fit(node.threw, layout.chars - 2)
+                  : returned
                   ? node.ret === undefined || node.ret === null
                     ? 'done'
                     : '→ ' + fit(shortValue(node.ret, steps[node.returnStep!].heap), layout.chars - 2)

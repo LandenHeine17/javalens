@@ -12,6 +12,7 @@ export interface CallNode {
   firstStep: number; // step index where the call starts
   returnStep: number | null; // step index where it returns (if it does)
   ret: Value | null | undefined; // undefined = no value (void / not returned yet)
+  threw?: string; // the exception that ended this call early (it then has no return value)
 }
 
 /** Builds the tree of every method call in the run: each frame id becomes a node. */
@@ -42,6 +43,13 @@ export function buildCallTree(steps: Step[]): { nodes: Map<number, CallNode>; ro
         else if (root === null) root = f.id;
       }
     });
+    for (const id of unwoundFrames(step)) {
+      const node = nodes.get(id)!;
+      if (node.returnStep === null) {
+        node.returnStep = i;
+        node.threw = exceptionName(step.exception);
+      }
+    }
     const top = step.stack[step.stack.length - 1];
     if (step.kind === 'return' && top) {
       const node = nodes.get(top.id)!;
@@ -71,6 +79,45 @@ export function shortValue(v: Value | null | undefined, heap: Record<string, Hea
       return o.type;
     }
   }
+}
+
+// ------------------------------------------------------------ exceptions
+
+/** "java.lang.NumberFormatException: For input string" -> "NumberFormatException". */
+export function exceptionName(exception: string | undefined): string {
+  if (!exception) return 'exception';
+  const type = exception.split(':')[0].trim();
+  return type.slice(type.lastIndexOf('.') + 1);
+}
+
+/**
+ * On an exception step, the calls the exception ends early: every call above the one that catches
+ * it, or every call if nothing does (the program stops). Library code catching it: none we can show.
+ */
+export function unwoundFrames(step: Step | undefined): Set<number> {
+  const out = new Set<number>();
+  if (!step || step.kind !== 'exception') return out;
+  if (step.caught && step.catchFrame === undefined) return out;
+  let above = !step.caught;
+  for (const f of step.stack) {
+    if (above) out.add(f.id);
+    if (f.id === step.catchFrame) above = true;
+  }
+  return out;
+}
+
+/**
+ * What kind of handler starts at `line`: a catch block, or a finally block (javac compiles finally
+ * as a handler that catches everything, runs the block, then throws the exception on).
+ */
+export function handlerKind(code: string, line: number): 'catch' | 'finally' {
+  const lines = code.split('\n');
+  for (let i = Math.min(line, lines.length) - 1; i >= 0 && i >= line - 30; i--) {
+    const text = lines[i].replace(/\/\/.*$/, '').replace(/"(?:[^"\\]|\\.)*"/g, '""');
+    const m = text.match(/.*\b(catch|finally)\b/); // the last one on the line
+    if (m) return m[1] as 'catch' | 'finally';
+  }
+  return 'catch';
 }
 
 // ------------------------------------------------------------ line counts
@@ -202,10 +249,13 @@ export function stepChanges(prev: Step | undefined, step: Step | undefined, isNe
   const prevFrames = new Map(prev.stack.map((f) => [f.id, f]));
   const nowFrames = new Set(step.stack.map((f) => f.id));
 
-  // calls that returned
+  if (step.kind === 'exception') out.push(`throws ${exceptionName(step.exception)}`);
+  // calls that returned, or were ended by an exception
+  const unwound = unwoundFrames(prev);
   for (const f of prev.stack) {
     if (nowFrames.has(f.id)) continue;
-    out.push(f.ret !== undefined && f.ret !== null ? `${f.method}() returned ${shortValue(f.ret, prev.heap)}` : `${f.method}() returned`);
+    if (unwound.has(f.id)) out.push(`${f.method}() ended by ${exceptionName(prev.exception)}`);
+    else out.push(f.ret !== undefined && f.ret !== null ? `${f.method}() returned ${shortValue(f.ret, prev.heap)}` : `${f.method}() returned`);
   }
   for (const f of step.stack) {
     const before = prevFrames.get(f.id);

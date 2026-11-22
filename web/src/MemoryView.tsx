@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { Frame, HeapObj, Step, Value } from './types';
-import { valueHistory } from './analysis';
+import { unwoundFrames, valueHistory } from './analysis';
 import { cellText, gridPointers, gridRows, type GridVars } from './grid';
 
 /**
@@ -85,6 +85,7 @@ export default function MemoryView({ step, prev, indexNames, steps, index, gridV
   const hiddenArgs = hiddenArgsId(step);
   const pointers = indexPointers(step, indexNames);
   const ctx: Ctx = { step, prev, hovered, onHover: setHovered, pointers, steps, index, gridVars: gridVars ?? new Map() };
+  const unwound = unwoundFrames(step); // on an exception step: the calls it ends early
 
   return (
     <div className="memory" ref={wrapRef}>
@@ -100,6 +101,7 @@ export default function MemoryView({ step, prev, indexNames, steps, index, gridV
             indent={Math.min(i, MAX_INDENT)}
             prevFrame={prevFrames.get(f.id)}
             isTop={i === frames.length - 1}
+            exception={unwound.has(f.id) ? 'unwinding' : f.id === step.catchFrame ? 'catching' : undefined}
             ctx={ctx}
             hiddenArgs={hiddenArgs}
             hiddenAfter={i === 0 ? step.hiddenFrames : undefined}
@@ -280,16 +282,24 @@ function FrameCard(props: {
   indent: number;
   prevFrame?: Frame;
   isTop: boolean;
+  exception?: 'unwinding' | 'catching'; // on an exception step: this call ends early, or catches it
   ctx: Ctx;
   hiddenArgs: number | null;
   hiddenAfter?: number;
 }) {
-  const { frame, caller, indent, prevFrame, isTop, ctx, hiddenArgs, hiddenAfter } = props;
+  const { frame, caller, indent, prevFrame, isTop, exception, ctx, hiddenArgs, hiddenAfter } = props;
   const [historyOf, setHistoryOf] = useState<string | null>(null); // hovered variable (history computed on demand)
   const prevLocals = new Map((prevFrame?.locals ?? []).map((l) => [l.name, l.v]));
   const locals = frame.locals.filter((l) => !(l.v.k === 'r' && l.v.id === hiddenArgs));
   const returning = isTop && ctx.step.kind === 'return';
-  const cls = ['frame', isTop ? 'top' : '', !prevFrame ? 'pushed' : '', returning ? 'returning' : ''].join(' ');
+  const cls = ['frame', isTop ? 'top' : '', !prevFrame ? 'pushed' : '', returning ? 'returning' : '', exception ?? ''].join(' ');
+  const pill = exception === 'unwinding' ? (isTop ? 'throws' : 'unwinding') : exception === 'catching' ? 'catches it' : isTop ? (returning ? 'returning' : 'running') : null;
+  const pillTitle =
+    exception === 'unwinding'
+      ? 'The exception ends this call early: it never returns a value'
+      : exception === 'catching'
+        ? 'This call catches the exception and carries on'
+        : 'This call is on top of the stack';
   const rowCls = 'frame-row' + (caller ? ' nested' : '') + (isTop ? ' active' : '');
 
   return (
@@ -301,9 +311,9 @@ function FrameCard(props: {
               {frame.method}
               <span className="paren">()</span>
             </span>
-            {isTop && (
-              <span className={'pill ' + (returning ? 'returning' : 'running')} title="This call is on top of the stack">
-                {returning ? 'returning' : 'running'}
+            {pill && (
+              <span className={'pill ' + (exception ?? (returning ? 'returning' : 'running'))} title={pillTitle}>
+                {pill}
               </span>
             )}
             <span className="frame-line" title={frame.file}>

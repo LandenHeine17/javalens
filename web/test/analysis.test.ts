@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bestFit, buildCallTree, indexVariableNames, lineCounts, firstSeen, parseVary, samplePoints, shortValue, stepChanges, valueHistory } from '../src/analysis.ts';
+import { bestFit, buildCallTree, indexVariableNames, lineCounts, exceptionName, firstSeen, handlerKind, parseVary, samplePoints, shortValue, stepChanges, unwoundFrames, valueHistory } from '../src/analysis.ts';
 import { frame, int, intArray, local, nul, ref, step } from './fixtures.ts';
 import type { Value } from '../src/types.ts';
 
@@ -115,4 +115,32 @@ test('valueHistory follows one call\'s variable and never looks ahead', () => {
   assert.deepEqual(valueHistory(steps, 2, 'sum', 99), []); // another call
   const bools = [step([frame(1, 'main', [local('ok', { k: 'p', v: 'true' })])])];
   assert.deepEqual(valueHistory(bools, 1, 'ok', 0), []);
+});
+
+test('exceptions: which calls unwind, the call tree, and the change line', () => {
+  const main = frame(1, 'main', []);
+  const check = frame(2, 'checkedAge', []);
+  const parse = frame(3, 'parseAge', []);
+  const exc = 'java.lang.NumberFormatException: For input string: "abc"';
+  const thrown = step([main, check, parse], {}, { kind: 'exception', exception: exc, caught: true, catchLine: 27, catchFrame: 1 });
+  assert.deepEqual([...unwoundFrames(thrown)], [2, 3]);
+  assert.deepEqual([...unwoundFrames({ ...thrown, caught: undefined, catchFrame: undefined })], [1, 2, 3]); // uncaught: everything stops
+  assert.deepEqual([...unwoundFrames({ ...thrown, catchFrame: undefined, catchLine: undefined })], []); // library code catches it
+  assert.equal(exceptionName(exc), 'NumberFormatException');
+
+  const steps = [step([main]), step([main, check]), step([main, check, parse]), thrown, step([main])];
+  const { nodes } = buildCallTree(steps);
+  assert.equal(nodes.get(3)!.threw, 'NumberFormatException');
+  assert.equal(nodes.get(3)!.returnStep, 3);
+  assert.equal(nodes.get(1)!.threw, undefined);
+
+  assert.deepEqual(stepChanges(steps[2], thrown), ['throws NumberFormatException']);
+  assert.deepEqual(stepChanges(thrown, steps[4]), ['checkedAge() ended by NumberFormatException', 'parseAge() ended by NumberFormatException']);
+});
+
+test('handlerKind tells a catch block from a finally block', () => {
+  const code = ['try {', '  f();', '} catch (Exception e) {', '  log(e);', '} finally {', '  System.out.println("catch me");', '}'].join('\n');
+  assert.equal(handlerKind(code, 3), 'catch');
+  assert.equal(handlerKind(code, 4), 'catch');
+  assert.equal(handlerKind(code, 6), 'finally'); // the word in the string doesn't count
 });

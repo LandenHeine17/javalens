@@ -4,6 +4,7 @@ import * as monaco from 'monaco-editor';
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import type { Diagnostic, Step } from './types';
 import { registerJavaAssist } from './javaAssist';
+import { handlerKind } from './analysis';
 
 // Use the locally installed Monaco (works offline in a lecture hall) instead of a CDN copy.
 self.MonacoEnvironment = { getWorker: () => new editorWorker() };
@@ -154,6 +155,20 @@ export default function Editor({ code, onChange, step, diagnostics, fontSize, co
       range: new monaco.Range(step.line, 1, step.line, 1),
       options: { isWholeLine: true, className: cls, glyphMarginClassName: 'glyph-current' },
     });
+    // An exception: mark where it will land (in this file), a catch block or a finally block.
+    const model = ed.getModel();
+    if (step.kind === 'exception' && step.catchLine && !step.catchFile && model && step.catchLine <= model.getLineCount()) {
+      const kind = handlerKind(model.getValue(), step.catchLine);
+      decos.push({
+        range: new monaco.Range(step.catchLine, 1, step.catchLine, model.getLineMaxColumn(step.catchLine)),
+        options: {
+          isWholeLine: true,
+          className: 'line-catch',
+          showIfCollapsed: true,
+          after: { content: kind === 'finally' ? '   ⤶ the finally block runs next' : '   ⤶ caught here', inlineClassName: 'line-catch-note' },
+        },
+      });
+    }
     decorations.current.set(decos);
     ed.revealLineInCenterIfOutsideViewport(step.line);
   }, [step]);
