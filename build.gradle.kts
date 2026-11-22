@@ -64,6 +64,8 @@ tasks.test {
     val spacedTmp = layout.buildDirectory.dir("tmp/test temp")
     doFirst { spacedTmp.get().asFile.mkdirs() }
     systemProperty("java.io.tmpdir", spacedTmp.get().asFile.absolutePath)
+    // The sandbox tests (class mode) start many JVMs: only on request, ./gradlew test -PsandboxTests=true
+    systemProperty("javalens.sandboxTests", providers.gradleProperty("sandboxTests").getOrElse("false"))
     testLogging {
         events("failed")
         exceptionFormat = TestExceptionFormat.FULL

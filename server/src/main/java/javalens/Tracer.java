@@ -17,6 +17,9 @@ import java.util.*;
  * a snapshot of the stack, heap and output after every line. The browser replays these snapshots.
  */
 public final class Tracer {
+    /** Extra options for the student's JVM (class mode caps its memory; see TraceWorker). */
+    static volatile String extraJvmOptions = "";
+
     public static final int MAX_STEPS = 10_000; // in practice ~5000+ fit in TIMEOUT_MS (each step is a few debugger round trips)
     public static final long TIMEOUT_MS = 3000;
     private static final int MAX_HEAP_OBJECTS = 150;
@@ -104,7 +107,8 @@ public final class Tracer {
         Map<String, Connector.Argument> args = conn.defaultArguments();
         args.get("main").setValue(compiled.mainClass());
         // Quoted: the temp folder can contain spaces (e.g. a Windows user name like "Jo Smith").
-        args.get("options").setValue("-cp \"" + compiled.dir() + "\" -Xss2m -XX:TieredStopAtLevel=1 -Xshare:auto");
+        args.get("options").setValue("-cp \"" + compiled.dir() + "\" -Xss2m -XX:TieredStopAtLevel=1 -Xshare:auto "
+                + extraJvmOptions);
         VirtualMachine vm = conn.launch(args);
         this.vm = vm;
         Process proc = vm.process();

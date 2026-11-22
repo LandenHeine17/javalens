@@ -118,7 +118,7 @@ export default function App() {
   const [predict, setPredict] = useState(false);
   const [awaitingReveal, setAwaitingReveal] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  const [appVersion, setAppVersion] = useState<{ version: string; latest: string | null; url: string | null } | null>(null);
+  const [appVersion, setAppVersion] = useState<{ version: string; latest: string | null; url: string | null; classMode?: boolean } | null>(null);
   const [shareNote, setShareNote] = useState<string | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null); // shown to copy by hand when the clipboard isn't available
 
@@ -237,12 +237,14 @@ export default function App() {
     }
   }, [code]);
 
-  // Live mode: re-run shortly after typing stops.
+  // Live mode: re-run shortly after typing stops (a little later in class mode, where a whole class
+  // shares the teacher's laptop).
+  const liveDelay = appVersion?.classMode ? 1200 : 500;
   useEffect(() => {
     if (!live) return;
-    const t = setTimeout(() => run(code, stdin, project), 500);
+    const t = setTimeout(() => run(code, stdin, project), liveDelay);
     return () => clearTimeout(t);
-  }, [code, stdin, project, live, run]);
+  }, [code, stdin, project, live, run, liveDelay]);
 
   const loadSample = (name: string) => {
     const s = samples.find((x) => x.name === name);

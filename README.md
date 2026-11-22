@@ -107,6 +107,35 @@ Records, enums, sealed interfaces with pattern-matching `switch`, lambdas and st
 - **Present** enlarges the text and trims the header for the projector.
 - **Sun/moon button** switches between the dark and light themes. Light is usually easier to read on a projector, and your choice is remembered.
 
+## Using it with a class
+
+Class mode lets students use JavaLens in their browser during class, with nothing to install. Everything runs on your laptop and it's free: a Cloudflare *quick tunnel* gives the laptop a temporary public `https://` address. Linux only (it relies on bubblewrap and systemd, which Fedora and Ubuntu have).
+
+One-time setup, install `cloudflared` (Fedora/RHEL; for other systems see Cloudflare's downloads page):
+
+```bash
+sudo dnf install https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-x86_64.rpm
+```
+
+Each class:
+
+```bash
+./class.sh
+```
+
+It prints one link, like `https://some-random-words.trycloudflare.com/join/KDMXQT`. Give it to the students (and open it yourself). Share links work too once a student has opened the class link. Ctrl+C ends class; the link stops working and the next class gets a new one.
+
+**Safety.** JavaLens runs whatever code it's given, so class mode never runs a student's program as you:
+- Each run happens in a sandbox (bubblewrap): no network at all, no access to your home folder, read-only system files, a private `/tmp` that's thrown away.
+- Each run has its own memory, process and CPU caps, and **all runs together** share one memory budget (a systemd slice), so a class can't use up the laptop's memory.
+- Only browsers that opened the class link (it has a code) get in. Each student can have 2 runs going and 40 a minute.
+
+**How many students.** The memory budget decides it. By default class mode takes 40% of the memory that's free when it starts (at most 2 GB) and plans ~200 MB per run, so with 4 GB free that's about 1.6 GB and up to 8 programs at once. A typical class program runs in well under a second, and Live mode sends a run when a student stops typing, so 8 at once comfortably serves a class of 30 to 40; when every slot is busy, students wait a moment (and are told the server is busy after 10 s). **Close big apps (dev servers, browsers with many tabs) before class** so there's memory to spare. Set it yourself with `./class.sh --budget 1500 --max-runs 6`.
+
+Quick tunnels are a free Cloudflare service with no uptime promise; for a class that's usually fine.
+
+The sandbox's own tests start many sandboxed JVMs, so they don't run with `./gradlew test`; run them on purpose with memory free: `./gradlew test --tests javalens.SandboxTest -PsandboxTests=true`.
+
 ## How it works
 
 1. `server/src/main/java/javalens/Compiler.java` compiles the code in memory with the JDK's own compiler, which takes about 30ms.

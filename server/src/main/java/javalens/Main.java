@@ -28,6 +28,9 @@ public final class Main {
 
     public static void main(String[] args) throws IOException {
         boolean dev = false, embedded = false, browser = true, headless = GraphicsEnvironment.isHeadless();
+        boolean classMode = false;
+        String classCode = null;
+        Integer maxRuns = null, budgetMb = null;
         Integer port = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -37,8 +40,17 @@ public final class Main {
                 case "--no-browser" -> browser = false;
                 case "--headless" -> headless = true;
                 case "--port" -> port = Integer.parseInt(args[++i]);
+                // Class mode: serve a class through a tunnel (see class.sh and ClassRoom).
+                case "--class" -> classMode = true;
+                case "--code" -> classCode = args[++i];
+                case "--max-runs" -> maxRuns = Integer.parseInt(args[++i]);
+                case "--budget" -> budgetMb = Integer.parseInt(args[++i]);
                 default -> System.err.println("Unknown option: " + args[i]);
             }
+        }
+        if (classMode) {
+            startClass(port == null ? 7171 : port, classCode, maxRuns, budgetMb);
+            return;
         }
         if (embedded && port == null) port = 0; // any free port; the extension reads it from our output
         if (dev || embedded) {
@@ -101,6 +113,50 @@ public final class Main {
     }
 
     /** Only listen on this machine: the server runs whatever code it is given. */
+    /**
+     * Class mode: only on this computer (127.0.0.1; students come in through the tunnel), every run
+     * sandboxed, and all runs together kept inside a memory budget sized from what's free now.
+     */
+    private static void startClass(int port, String code, Integer maxRuns, Integer budgetMb) throws IOException {
+        String why = Sandbox.unavailable();
+        if (why != null) {
+            System.err.println("Class mode can't start: " + why + ".");
+            System.exit(1);
+        }
+        long free = Sandbox.availableMb();
+        long budget = budgetMb != null ? budgetMb : Sandbox.defaultBudgetMb();
+        if (budget < 2 * Sandbox.MB_PER_RUN || budget > free) {
+            System.err.println("Not enough free memory for a class (" + free + " MB free; student programs need at least "
+                    + 2 * Sandbox.MB_PER_RUN + " MB). Close some apps and try again.");
+            System.exit(1);
+        }
+        int fits = (int) (budget / Sandbox.MB_PER_RUN);
+        int runs = Math.max(1, Math.min(maxRuns != null ? maxRuns : Math.min(8, fits), fits));
+        String problem = Sandbox.setBudget(budget, runs);
+        if (problem != null) {
+            System.err.println("Class mode can't start: " + problem);
+            System.exit(1);
+        }
+        if (code != null && !ClassRoom.isValidCode(code)) {
+            System.err.println("--code must be 4-12 letters");
+            System.exit(1);
+        }
+        ClassRoom room = new ClassRoom(code != null ? code : ClassRoom.newCode(), runs);
+
+        HttpServer server = listen(port);
+        Api.register(server, room);
+        server.createContext("/", room.guard(ClassRoom.Kind.PAGE, new StaticFiles()));
+        // Plenty of threads: runs wait for a slot, and editor help must not wait behind them.
+        server.setExecutor(Executors.newFixedThreadPool(64));
+        server.start();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
+
+        System.out.println("JavaLens " + AppInfo.VERSION + " class mode on http://127.0.0.1:" + port + "/");
+        System.out.println("Class code: " + room.code + "   (students open <tunnel address>/join/" + room.code + ")");
+        System.out.println("Student programs: up to " + runs + " at once, " + budget + " MB of memory between them ("
+                + free + " MB free now). Ctrl+C to end class.");
+    }
+
     private static HttpServer listen(int port) throws IOException {
         return HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
     }

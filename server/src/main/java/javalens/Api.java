@@ -28,14 +28,29 @@ import java.util.zip.GZIPOutputStream;
 public final class Api {
     private Api() {}
 
+    /** Class mode, when the server was started with --class (else null): runs are sandboxed and limited. */
+    private static volatile ClassRoom room;
+
     public static void register(HttpServer server) {
-        server.createContext("/run", ex -> handleRun(ex, false));
-        server.createContext("/count", ex -> handleRun(ex, true));
-        server.createContext("/complete", ex -> handleAssist(ex, Assist::complete));
-        server.createContext("/hover", ex -> handleAssist(ex, Assist::hover));
-        server.createContext("/signature", ex -> handleAssist(ex, Assist::signature));
-        server.createContext("/version", ex -> send(ex, 200, AppInfo.versionJson(), "application/json; charset=utf-8"));
-        server.createContext("/ping", ex -> send(ex, 200, Instance.PING_REPLY, "text/plain; charset=utf-8"));
+        register(server, null);
+    }
+
+    public static void register(HttpServer server, ClassRoom classRoom) {
+        room = classRoom;
+        context(server, "/run", ClassRoom.Kind.RUN, ex -> handleRun(ex, false));
+        context(server, "/count", ClassRoom.Kind.RUN, ex -> handleRun(ex, true));
+        context(server, "/complete", ClassRoom.Kind.HELP, ex -> handleAssist(ex, Assist::complete));
+        context(server, "/hover", ClassRoom.Kind.HELP, ex -> handleAssist(ex, Assist::hover));
+        context(server, "/signature", ClassRoom.Kind.HELP, ex -> handleAssist(ex, Assist::signature));
+        context(server, "/version", ClassRoom.Kind.OTHER, ex -> send(ex, 200, room != null
+                ? "{\"version\":" + Json.str(AppInfo.VERSION) + ",\"latest\":null,\"url\":null,\"classMode\":true}"
+                : AppInfo.versionJson(), "application/json; charset=utf-8"));
+        context(server, "/ping", ClassRoom.Kind.OTHER, ex -> send(ex, 200, Instance.PING_REPLY, "text/plain; charset=utf-8"));
+        if (room != null) server.createContext("/join/", room::join);
+    }
+
+    private static void context(HttpServer server, String path, ClassRoom.Kind kind, com.sun.net.httpserver.HttpHandler h) {
+        server.createContext(path, room != null ? room.guard(kind, h) : h);
     }
 
     private static void handleRun(HttpExchange ex, boolean countOnly) throws IOException {
@@ -56,7 +71,8 @@ public final class Api {
                 return;
             }
             String stdin = req.getOrDefault("stdin", "");
-            String trace = countOnly ? Tracer.count(compiled, stdin) : Tracer.run(compiled, stdin);
+            String trace = room != null ? Sandbox.trace(compiled, stdin, countOnly) // class mode: never run student code unsandboxed
+                    : countOnly ? Tracer.count(compiled, stdin) : Tracer.run(compiled, stdin);
             long totalMs = (System.nanoTime() - start) / 1_000_000;
             // Splice diagnostics (warnings) and timing into the trace object.
             sendJson(ex, 200, trace.substring(0, trace.length() - 1)
