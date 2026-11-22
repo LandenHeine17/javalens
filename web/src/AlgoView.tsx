@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Flag, Pause, Play, RotateCcw, Swords } from 'lucide-react';
-import type { Project, RunResult, Step } from './types';
+import type { Project, Step } from './types';
+import { fetchRun } from './trace';
 import { indexVariableNames } from './analysis';
 import {
   analyzeRun, candidateArrays, cellsOf, helperArrays, indexVarsByArray, intVars, namesOf, pointerNamesFor, pointersFor, ranges, searchTarget, withSameInput,
@@ -349,13 +350,7 @@ function Race(props: {
     setError(null);
     setPlaying(false);
     setT(0);
-    fetch('/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: bCode, stdin }), // samples are single files
-      signal: ctrl.signal,
-    })
-      .then((r) => r.json() as Promise<RunResult>)
+    fetchRun({ code: bCode, stdin }, ctrl.signal) // samples are single files
       .then((data) => {
         if (data.ok) setB({ steps: data.steps, end: data.end, name: other });
         else setError(data.error === 'compile' ? `${other} didn't compile with this input.` : data.message);

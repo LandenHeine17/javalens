@@ -16,12 +16,13 @@ import { exceptionName, firstSeen, handlerKind, indexVariableNames, lineCounts, 
 import { defaultSample, samples } from './samples';
 import { decodeShare, encodeShare } from './share';
 import { gridIndexVars } from './grid';
+import { fetchRun } from './trace';
 import type { CodeClass, Diagnostic, EndReason, Project, RunResult, Step } from './types';
 
 const END_MESSAGES: Record<EndReason, string | null> = {
   finished: null,
-  timeout: 'Stopped after 3 seconds. Is there an infinite loop?',
-  step_limit: 'Stopped after the step limit. Showing the first steps only.',
+  timeout: 'Stopped after 3 seconds, so only the steps so far are shown. If the program should have finished by now, look for an infinite loop.',
+  step_limit: 'Stopped after 10,000 steps. Showing the first steps only.',
   too_deep: 'Recursion went more than 150 calls deep. Is the base case missing?',
 };
 
@@ -202,13 +203,7 @@ export default function App() {
     abortRef.current = ctrl;
     setStatus({ kind: 'running', text: 'running…' });
     try {
-      const res = await fetch('/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: source, stdin: input, ...projectFields(proj) }),
-        signal: ctrl.signal,
-      });
-      const data: RunResult = await res.json();
+      const data: RunResult = await fetchRun({ code: source, stdin: input, ...projectFields(proj) }, ctrl.signal);
       if (data.ok) {
         setCodeSeg(data.code ?? []);
         setSteps(data.steps);

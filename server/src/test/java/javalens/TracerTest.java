@@ -260,6 +260,39 @@ class TracerTest {
     }
 
     @Test
+    void stepsOnlyCarryWhatChanged() throws Exception {
+        String json = trace(sample("LinkedList"), "");
+        assertTrue(json.contains("\"delta\":true"));
+        assertTrue(json.contains("{\"id\":1,\"same\":1}"), "main's frame unchanged between steps");
+    }
+
+    @Test
+    void objectsAreReReadAfterAnyWriteToThem() throws Exception {
+        // Objects of the student's classes are only re-read after a field is written (see Tracer.watch);
+        // writes from another method, through another variable, and in a constructor must all show up.
+        String json = trace("""
+                public class Main {
+                    static class Box { int v; Box next; Box(int v) { this.v = v; } }
+                    static void bump(Box b) { b.v = b.v + 10; }
+                    public static void main(String[] args) {
+                        Box a = new Box(1);
+                        Box alias = a;
+                        alias.v = 2;
+                        bump(a);
+                        a.next = new Box(7);
+                        a.next.v = 8;
+                        System.out.println(a.v + " " + a.next.v);
+                    }
+                }
+                """, "");
+        assertEquals("\"12 8\\n\"", stdoutOf(json));
+        for (String v : new String[]{"1", "2", "12"}) {
+            assertTrue(json.contains("\"name\":\"v\",\"type\":\"int\",\"v\":{\"k\":\"p\",\"v\":\"" + v + "\"}"), "a.v = " + v);
+        }
+        assertTrue(json.contains("\"name\":\"v\",\"type\":\"int\",\"v\":{\"k\":\"p\",\"v\":\"8\"}"), "a.next.v = 8");
+    }
+
+    @Test
     void programInputReachesScanner() throws Exception {
         String json = trace("""
                 import java.util.Scanner;

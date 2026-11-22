@@ -3,12 +3,15 @@ package javalens;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.Deflater;
+import java.util.zip.GZIPOutputStream;
 
 /**
  * The HTTP endpoints the web page talks to:
@@ -116,6 +119,17 @@ public final class Api {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         ex.getResponseHeaders().set("Content-Type", type);
         ex.getResponseHeaders().set("Cache-Control", "no-store");
+        // Traces are repetitive JSON: gzip shrinks them ~20x (it matters once the server isn't local).
+        String accept = ex.getRequestHeaders().getFirst("Accept-Encoding");
+        if (bytes.length > 8192 && accept != null && accept.contains("gzip")) {
+            ByteArrayOutputStream packed = new ByteArrayOutputStream(bytes.length / 8);
+            try (GZIPOutputStream gz = new GZIPOutputStream(packed) {{ def.setLevel(Deflater.BEST_SPEED); }}) {
+                gz.write(bytes);
+            }
+            bytes = packed.toByteArray();
+            ex.getResponseHeaders().set("Content-Encoding", "gzip");
+            ex.getResponseHeaders().set("Vary", "Accept-Encoding");
+        }
         ex.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = ex.getResponseBody()) { os.write(bytes); }
     }

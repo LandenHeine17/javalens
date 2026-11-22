@@ -17,7 +17,7 @@ import java.util.*;
  * a snapshot of the stack, heap and output after every line. The browser replays these snapshots.
  */
 public final class Tracer {
-    public static final int MAX_STEPS = 3000;
+    public static final int MAX_STEPS = 10_000; // in practice ~5000+ fit in TIMEOUT_MS (each step is a few debugger round trips)
     public static final long TIMEOUT_MS = 3000;
     private static final int MAX_HEAP_OBJECTS = 150;
     private static final int MAX_ARRAY_ITEMS = 100;
@@ -59,6 +59,29 @@ public final class Tracer {
     private final List<String> codeJson = new ArrayList<>(); // one entry per loaded user class: its methods
 
     private VirtualMachine vm;
+
+    // Speed: every debugger call is a round trip to the student's JVM, so read fields in batches and
+    // remember what can't change. Strings and boxed numbers are immutable, so their text is cached by id.
+    private final Map<Long, String> stringTexts = new HashMap<>();
+    private final Map<Long, String> boxedTexts = new HashMap<>();
+    private final Map<ReferenceType, List<Field>> instanceFields = new HashMap<>();
+    private final Map<Long, Integer> arrayLengths = new HashMap<>(); // an array's length never changes
+    private final Map<String, List<Field>> staticFields = new HashMap<>();
+    private final Set<String> initializedClasses = new HashSet<>();
+
+    // Objects of student classes are only re-read after one of their fields is written: the debugger
+    // reports every write (a modification watchpoint per field) without stopping the program, so an
+    // object that wasn't written keeps the description we read last time.
+    private record Described(String json, List<ObjectReference> refs) {}
+    private final Map<Long, Described> described = new HashMap<>();
+    private final Set<Long> written = new HashSet<>();
+    private final Set<ReferenceType> watched = new HashSet<>();
+    private boolean watching = false;
+
+    // What the previous step sent, for delta encoding.
+    private Map<Long, String> prevFrameJson = Map.of();
+    private Map<Long, String> prevHeapJson = Map.of();
+    private String prevStatics = "";
 
     private Tracer(Compiler.Result compiled, String stdin, boolean countOnly) {
         this.compiled = compiled;
@@ -117,7 +140,12 @@ public final class Tracer {
                 for (Event e : set) {
                     if (e instanceof VMDeathEvent || e instanceof VMDisconnectEvent) break loop;
 
-                    if (e instanceof ClassPrepareEvent cpe) {
+                    if (e instanceof ModificationWatchpointEvent mw) {
+                        ObjectReference obj = mw.object();
+                        if (obj != null) written.add(obj.uniqueID());
+                    } else if (e instanceof ClassPrepareEvent cpe && tracing) {
+                        if (watching && isUserCode(cpe.referenceType().name())) watch(cpe.referenceType());
+                    } else if (e instanceof ClassPrepareEvent cpe) {
                         for (Method m : cpe.referenceType().methodsByName("main")) {
                             if (m.location() != null) erm.createBreakpointRequest(m.location()).enable();
                         }
@@ -143,6 +171,20 @@ public final class Tracer {
                         ExceptionRequest exc = erm.createExceptionRequest(null, true, true);
                         exc.addThreadFilter(t);
                         exc.enable();
+
+                        if (vm.canWatchFieldModification()) {
+                            watching = true;
+                            for (String name : compiled.userClasses()) { // classes loaded later
+                                for (String pattern : new String[]{name, name + "$*"}) {
+                                    ClassPrepareRequest later = erm.createClassPrepareRequest();
+                                    later.addClassFilter(pattern);
+                                    later.enable();
+                                }
+                            }
+                            for (ReferenceType rt : vm.allClasses()) { // classes already loaded
+                                if (rt.isPrepared() && isUserCode(rt.name())) watch(rt);
+                            }
+                        }
 
                         snapshot(t, "line", null, null, null, out, err);
                     } else if (e instanceof StepEvent se && countOnly) {
@@ -190,12 +232,24 @@ public final class Tracer {
             return "{\"ok\":true,\"end\":" + Json.str(endReason) + ",\"count\":" + counted + "}";
         }
         StringBuilder json = new StringBuilder();
-        json.append("{\"ok\":true,\"end\":").append(Json.str(endReason))
+        json.append("{\"ok\":true,\"delta\":true,\"end\":").append(Json.str(endReason))
             .append(",\"maxSteps\":").append(MAX_STEPS)
             .append(",\"stdout\":").append(Json.str(stdout.toString()))
             .append(",\"code\":[").append(String.join(",", codeJson)).append(']')
             .append(",\"steps\":[").append(String.join(",", steps)).append("]}");
         return json.toString();
+    }
+
+    /** Ask to be told (without stopping) whenever a field of this student class is written. */
+    private void watch(ReferenceType rt) {
+        if (!watched.add(rt)) return;
+        EventRequestManager erm = vm.eventRequestManager();
+        for (Field f : rt.fields()) {
+            if (f.isStatic()) continue;
+            ModificationWatchpointRequest r = erm.createModificationWatchpointRequest(f);
+            r.setSuspendPolicy(EventRequest.SUSPEND_NONE);
+            r.enable();
+        }
     }
 
     private boolean isUserCode(String typeName) {
@@ -244,43 +298,54 @@ public final class Tracer {
           .append(",\"out\":").append(stdout.length());
         if (hidden > 0) sb.append(",\"hiddenFrames\":").append(hidden);
 
+        // Delta encoding: a frame that is exactly as it was on the previous step is sent as
+        // {"id":n,"same":1}; the page fills it in from that step (see web/src/trace.ts).
+        Map<Long, String> frameJson = new HashMap<>();
         sb.append(",\"stack\":[");
         for (int i = 0; i < frames.size(); i++) {
             StackFrame f = frames.get(i);
             if (i > 0) sb.append(',');
+            StringBuilder fs = new StringBuilder();
             Method m = f.location().method();
-            sb.append("{\"id\":").append(ids.get(i))
+            fs.append("{\"id\":").append(ids.get(i))
               .append(",\"method\":").append(Json.str(m.name().equals("<init>") ? "new " + simpleName(m.declaringType().name()) : m.name()))
               .append(",\"cls\":").append(Json.str(m.declaringType().name()))
               .append(",\"line\":").append(f.location().lineNumber());
             String file = otherFile(f);
-            if (file != null) sb.append(",\"file\":").append(Json.str(file));
-            sb.append(",\"locals\":[");
+            if (file != null) fs.append(",\"file\":").append(Json.str(file));
+            fs.append(",\"locals\":[");
             boolean first = true;
-            ObjectReference self = f.thisObject();
+            ObjectReference self = m.isStatic() || m.isNative() ? null : f.thisObject();
             if (self != null) {
-                sb.append("{\"name\":\"this\",\"type\":").append(Json.str(simpleName(self.referenceType().name())))
+                fs.append("{\"name\":\"this\",\"type\":").append(Json.str(simpleName(self.referenceType().name())))
                   .append(",\"v\":").append(value(self, toVisit)).append('}');
                 first = false;
             }
             try {
-                for (LocalVariable lv : f.visibleVariables()) {
-                    if (!first) sb.append(',');
+                List<LocalVariable> vars = f.visibleVariables();
+                Map<LocalVariable, Value> vals = f.getValues(vars); // one round trip for all of them
+                for (LocalVariable lv : vars) {
+                    if (!first) fs.append(',');
                     first = false;
-                    sb.append("{\"name\":").append(Json.str(lv.name()))
+                    fs.append("{\"name\":").append(Json.str(lv.name()))
                       .append(",\"type\":").append(Json.str(simpleName(lv.typeName())));
                     if (compiled.finalLocals().contains(simpleName(m.declaringType().name()) + "." + m.name() + "." + lv.name())) {
-                        sb.append(",\"final\":true");
+                        fs.append(",\"final\":true");
                     }
-                    sb.append(",\"v\":").append(value(f.getValue(lv), toVisit)).append('}');
+                    fs.append(",\"v\":").append(value(vals.get(lv), toVisit)).append('}');
                 }
             } catch (AbsentInformationException ignored) { }
-            sb.append(']');
+            fs.append(']');
             if (i == frames.size() - 1 && kind.equals("return")) {
-                sb.append(",\"ret\":").append(m.returnTypeName().equals("void") ? "null" : value(returnValue, toVisit));
+                fs.append(",\"ret\":").append(m.returnTypeName().equals("void") ? "null" : value(returnValue, toVisit));
             }
-            sb.append('}');
+            fs.append('}');
+            String json = fs.toString();
+            frameJson.put(ids.get(i), json);
+            if (json.equals(prevFrameJson.get(ids.get(i)))) sb.append("{\"id\":").append(ids.get(i)).append(",\"same\":1}");
+            else sb.append(json);
         }
+        prevFrameJson = frameJson;
         sb.append(']');
 
         if (exception != null) {
@@ -306,9 +371,31 @@ public final class Tracer {
         }
 
         String statics = statics(toVisit);
-        if (!statics.isEmpty()) sb.append(",\"statics\":[").append(statics).append(']');
+        if (!statics.isEmpty() && statics.equals(prevStatics)) sb.append(",\"staticsSame\":1");
+        else if (!statics.isEmpty()) sb.append(",\"statics\":[").append(statics).append(']');
+        prevStatics = statics;
 
-        sb.append(",\"heap\":{").append(heap(toVisit)).append("}}");
+        // The heap, also as a delta: only objects that are new or changed since the previous step,
+        // plus the ids of objects that are no longer there.
+        Map<Long, String> heap = heap(toVisit);
+        sb.append(",\"heap\":{");
+        boolean firstObj = true;
+        for (Map.Entry<Long, String> o : heap.entrySet()) {
+            if (o.getValue().equals(prevHeapJson.get(o.getKey()))) continue;
+            if (!firstObj) sb.append(',');
+            firstObj = false;
+            sb.append('"').append(o.getKey()).append("\":").append(o.getValue());
+        }
+        sb.append('}');
+        StringBuilder gone = new StringBuilder();
+        for (Long id : prevHeapJson.keySet()) {
+            if (heap.containsKey(id)) continue;
+            if (!gone.isEmpty()) gone.append(',');
+            gone.append(id);
+        }
+        if (!gone.isEmpty()) sb.append(",\"gone\":[").append(gone).append(']');
+        prevHeapJson = heap;
+        sb.append('}');
         steps.add(sb.toString());
     }
 
@@ -352,7 +439,9 @@ public final class Tracer {
     private String value(Value v, Map<Long, ObjectReference> toVisit) {
         if (v == null) return "{\"k\":\"null\"}";
         if (v instanceof StringReference s) {
-            return "{\"k\":\"s\",\"v\":" + Json.str(s.value()) + ",\"id\":" + s.uniqueID()
+            String text = stringTexts.get(s.uniqueID());
+            if (text == null) stringTexts.put(s.uniqueID(), text = s.value());
+            return "{\"k\":\"s\",\"v\":" + Json.str(text) + ",\"id\":" + s.uniqueID()
                     + (pooledIds.contains(s.uniqueID()) ? ",\"pool\":true" : "") + "}";
         }
         if (v instanceof CharValue c) return "{\"k\":\"p\",\"v\":" + Json.str("'" + c.value() + "'") + "}";
@@ -370,32 +459,36 @@ public final class Tracer {
             "java.lang.Float", "java.lang.Short", "java.lang.Byte", "java.lang.Boolean", "java.lang.Character");
 
     private String unbox(ObjectReference o) {
+        String known = boxedTexts.get(o.uniqueID());
+        if (known != null) return known;
         if (!BOXES.contains(o.referenceType().name())) return null;
         Value inner = fieldValue(o, "value");
-        if (inner instanceof CharValue c) return "'" + c.value() + "'";
-        return inner == null ? null : inner.toString();
+        String text = inner instanceof CharValue c ? "'" + c.value() + "'" : inner == null ? null : inner.toString();
+        if (text != null) boxedTexts.put(o.uniqueID(), text); // boxes never change
+        return text;
     }
 
-    private String heap(Map<Long, ObjectReference> toVisit) {
+    /** Every object reachable from the stack and statics (up to the limit): id -> description. */
+    private Map<Long, String> heap(Map<Long, ObjectReference> toVisit) {
         Deque<ObjectReference> queue = new ArrayDeque<>(toVisit.values());
-        Set<Long> done = new HashSet<>();
-        List<String> parts = new ArrayList<>();
-        while (!queue.isEmpty() && done.size() < MAX_HEAP_OBJECTS) {
+        Map<Long, String> out = new LinkedHashMap<>();
+        while (!queue.isEmpty() && out.size() < MAX_HEAP_OBJECTS) {
             ObjectReference o = queue.poll();
-            if (!done.add(o.uniqueID())) continue;
+            if (out.containsKey(o.uniqueID())) continue;
             Map<Long, ObjectReference> next = new LinkedHashMap<>();
-            parts.add("\"" + o.uniqueID() + "\":" + describe(o, next));
-            for (ObjectReference n : next.values()) if (!done.contains(n.uniqueID())) queue.add(n);
+            out.put(o.uniqueID(), describe(o, next));
+            for (ObjectReference n : next.values()) if (!out.containsKey(n.uniqueID())) queue.add(n);
         }
-        return String.join(",", parts);
+        return out;
     }
 
     private String describe(ObjectReference o, Map<Long, ObjectReference> next) {
         String type = simpleName(o.referenceType().name());
         try {
             if (o instanceof ArrayReference arr) {
-                int len = arr.length();
-                List<Value> vals = arr.getValues(0, Math.min(len, MAX_ARRAY_ITEMS));
+                Integer len = arrayLengths.get(o.uniqueID());
+                if (len == null) arrayLengths.put(o.uniqueID(), len = arr.length());
+                List<Value> vals = len == 0 ? List.of() : arr.getValues(0, Math.min(len, MAX_ARRAY_ITEMS));
                 return "{\"kind\":\"array\",\"type\":" + Json.str(type) + ",\"len\":" + len
                         + ",\"items\":[" + joinValues(vals, next) + "]}";
             }
@@ -405,18 +498,35 @@ public final class Tracer {
             if (!isUserCode(full)) {
                 return "{\"kind\":\"opaque\",\"type\":" + Json.str(type) + "}";
             }
+            List<Field> fields = instanceFields.computeIfAbsent(o.referenceType(),
+                    rt -> rt.allFields().stream().filter(f -> !f.isStatic() && !f.isSynthetic()).toList());
+            // Unchanged since last time? Only if every one of its fields is watched (a field inherited
+            // from a library class isn't).
+            boolean cacheable = watching && fields.stream().allMatch(f -> watched.contains(f.declaringType()));
+            if (cacheable && !written.contains(o.uniqueID())) {
+                Described d = described.get(o.uniqueID());
+                if (d != null) {
+                    for (ObjectReference r : d.refs()) next.putIfAbsent(r.uniqueID(), r);
+                    return d.json();
+                }
+            }
             StringBuilder sb = new StringBuilder("{\"kind\":\"object\",\"type\":").append(Json.str(type)).append(",\"fields\":[");
             boolean first = true;
-            for (Field f : o.referenceType().allFields()) {
-                if (f.isStatic() || f.isSynthetic()) continue;
+            Map<Field, Value> vals = o.getValues(fields); // one round trip for every field
+            for (Field f : fields) {
                 if (!first) sb.append(',');
                 first = false;
                 sb.append("{\"name\":").append(Json.str(f.name()))
                   .append(",\"type\":").append(Json.str(simpleName(f.typeName())));
                 if (f.isFinal()) sb.append(",\"final\":true");
-                sb.append(",\"v\":").append(value(o.getValue(f), next)).append('}');
+                sb.append(",\"v\":").append(value(vals.get(f), next)).append('}');
             }
-            return sb.append("]}").toString();
+            String json = sb.append("]}").toString();
+            if (cacheable) {
+                described.put(o.uniqueID(), new Described(json, List.copyOf(next.values())));
+                written.remove(o.uniqueID());
+            }
+            return json;
         } catch (ObjectCollectedException ex) {
             return "{\"kind\":\"opaque\",\"type\":" + Json.str(type) + "}";
         }
@@ -435,15 +545,22 @@ public final class Tracer {
                 userTypes.put(name, ct);
                 codeJson.add(describeCode(ct));
             }
-            if (!ct.isInitialized()) continue;
+            ClassType type = ct;
+            List<Field> fields = staticFields.computeIfAbsent(name,
+                    n -> type.fields().stream().filter(f -> f.isStatic() && !f.isSynthetic() && !f.name().startsWith("$")).toList());
+            if (fields.isEmpty()) continue;
+            if (!initializedClasses.contains(name)) { // once initialized, always initialized
+                if (!ct.isInitialized()) continue;
+                initializedClasses.add(name);
+            }
             StringBuilder sb = new StringBuilder();
-            for (Field f : ct.fields()) {
-                if (!f.isStatic() || f.isSynthetic() || f.name().startsWith("$")) continue;
+            Map<Field, Value> vals = fields.isEmpty() ? Map.of() : ct.getValues(fields);
+            for (Field f : fields) {
                 if (!sb.isEmpty()) sb.append(',');
                 sb.append("{\"name\":").append(Json.str(f.name()))
                   .append(",\"type\":").append(Json.str(simpleName(f.typeName())));
                 if (f.isFinal()) sb.append(",\"final\":true");
-                sb.append(",\"v\":").append(value(ct.getValue(f), toVisit)).append('}');
+                sb.append(",\"v\":").append(value(vals.get(f), toVisit)).append('}');
             }
             if (sb.isEmpty()) continue;
             parts.add("{\"cls\":" + Json.str(simpleName(name)) + ",\"fields\":[" + sb + "]}");

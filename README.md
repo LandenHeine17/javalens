@@ -106,7 +106,7 @@ Release builds check that repo's Releases page and show an **Update available** 
 ## How it works
 
 1. `server/src/main/java/javalens/Compiler.java` compiles the code in memory with the JDK's own compiler, which takes about 30ms.
-2. `server/src/main/java/javalens/Tracer.java` launches the program in a separate JVM under the Java Debug Interface. It records the stack, variables, heap objects and output after every line, then returns the whole recording (a "trace") as JSON.
+2. `server/src/main/java/javalens/Tracer.java` launches the program in a separate JVM under the Java Debug Interface. It records the stack, variables, heap objects and output after every line, then returns the whole recording (a "trace") as JSON. Each step carries only what changed since the step before (`web/src/trace.ts` rebuilds the full steps), and objects of your own classes are only re-read after one of their fields is written, which the debugger reports without stopping the program.
 3. The web UI in `web/src/` replays the trace. Stepping backwards is instant because nothing re-runs.
 
 The tracer has these safety limits:
@@ -114,7 +114,7 @@ The tracer has these safety limits:
 | Limit | Value |
 | --- | --- |
 | Maximum run time | 3 seconds |
-| Maximum steps | 3000 |
+| Maximum steps | 10,000 (the time limit usually comes first, at roughly 4,000 steps) |
 | Maximum recursion depth | 150 calls |
 | Maximum output | 100k characters |
 
