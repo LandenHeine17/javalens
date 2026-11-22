@@ -571,7 +571,7 @@ function HeapBox({ id, ctx, downFields, compact }: { id: number; ctx: Ctx; downF
   return (
     <div className={box} data-obj={id}>
       <div className="obj-type">{obj.type}</div>
-      <div className="obj-meta">(library object)</div>
+      <div className="obj-meta">{obj.type === 'lambda' ? '(a function you can call)' : '(library object)'}</div>
     </div>
   );
 }

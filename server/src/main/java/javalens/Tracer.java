@@ -190,9 +190,9 @@ public final class Tracer {
                     } else if (e instanceof StepEvent se && countOnly) {
                         if (++counted % 2000 == 0) { drainQuietly(out); drainQuietly(err); }
                     } else if (e instanceof StepEvent se) {
-                        snapshot(se.thread(), "line", null, null, null, out, err);
+                        if (!hiddenStep(se.location())) snapshot(se.thread(), "line", null, null, null, out, err);
                     } else if (e instanceof MethodExitEvent me) {
-                        if (isUserCode(me.method().declaringType().name()) && !me.method().isSynthetic()) {
+                        if (!hiddenStep(me.location())) {
                             snapshot(me.thread(), "return", me.returnValue(), null, null, out, err);
                             topFramePopped = true;
                         }
@@ -240,6 +240,80 @@ public final class Tracer {
         return json.toString();
     }
 
+    /**
+     * Steps not worth showing: code without line numbers, and the methods javac writes for every enum
+     * (values, valueOf), which would otherwise show up as a step into the enum's first line.
+     */
+    private boolean hiddenStep(Location loc) {
+        if (loc.lineNumber() < 0 || !isUserCode(loc.declaringType().name())) return true;
+        Method m = loc.method();
+        return (m.isSynthetic() && !m.name().startsWith("lambda$")) || m.isBridge() // a lambda's body is synthetic too
+                || (m.declaringType() instanceof ClassType ct && ct.isEnum() && (m.name().equals("values") || m.name().equals("valueOf")));
+    }
+
+    // ---------------------------------------------------------------- names students recognise
+
+    private final Map<ReferenceType, String> typeLabels = new HashMap<>();
+    private static final java.util.regex.Pattern LAMBDA_METHOD = java.util.regex.Pattern.compile("lambda\\$(.+)\\$\\d+");
+
+    /** A class's name as a student would write it: Node, "anonymous Runnable", "lambda", Local. */
+    private String typeLabel(ReferenceType rt) {
+        String label = typeLabels.get(rt);
+        if (label == null) typeLabels.put(rt, label = computeTypeLabel(rt)); // not computeIfAbsent: it can recurse
+        return label;
+    }
+
+    private String computeTypeLabel(ReferenceType t) {
+        String name = t.name();
+        if (name.contains("$$Lambda")) return "lambda";
+        String simple = simpleName(name);
+        ClassType enumType = enumTypeOf(t);
+        if (enumType != null && enumType != t) return typeLabel(enumType); // an enum constant with a body { ... }
+        if (simple.matches("\\d+") && t instanceof ClassType ct) { // new Runnable() { ... }
+            List<InterfaceType> ifaces = ct.interfaces();
+            String base = !ifaces.isEmpty() ? ifaces.get(0).name() : ct.superclass() != null ? ct.superclass().name() : "Object";
+            return "anonymous " + simpleName(base);
+        }
+        return simple.replaceFirst("^\\d+(?=\\D)", ""); // a class declared inside a method: Main$1Helper -> Helper
+    }
+
+    /** A method's name for a stack frame: "new Node", "static init", "lambda in main". */
+    private String methodLabel(Method m) {
+        String n = m.name();
+        if (n.equals("<init>")) return "new " + typeLabel(m.declaringType());
+        if (n.equals("<clinit>")) return "static init";
+        java.util.regex.Matcher l = LAMBDA_METHOD.matcher(n);
+        if (l.matches()) {
+            String in = l.group(1);
+            return "lambda in " + (in.equals("static") ? "static init" : in.equals("new") ? "constructor" : in);
+        }
+        return n;
+    }
+
+    /** "Color.RED" for a constant of an enum that has no fields of its own (else null: drawn as an object). */
+    private final Map<Long, String> enumTexts = new HashMap<>();
+    private String enumConstant(ObjectReference o) {
+        String known = enumTexts.get(o.uniqueID());
+        if (known != null) return known.isEmpty() ? null : known;
+        String text = "";
+        ClassType enumType = enumTypeOf(o.referenceType());
+        if (enumType != null && isUserCode(enumType.name())) {
+            boolean ownFields = o.referenceType().allFields().stream()
+                    .anyMatch(f -> !f.isStatic() && !f.isSynthetic() && !f.declaringType().name().equals("java.lang.Enum"));
+            if (!ownFields && fieldValue(o, "name") instanceof StringReference name) text = typeLabel(enumType) + "." + name.value();
+        }
+        enumTexts.put(o.uniqueID(), text); // a constant never changes
+        return text.isEmpty() ? null : text;
+    }
+
+    /** The enum a constant belongs to (a constant with a body { ... } is a subclass of it), or null. */
+    private static ClassType enumTypeOf(ReferenceType rt) {
+        if (!(rt instanceof ClassType ct)) return null;
+        if (ct.isEnum()) return ct;
+        ClassType sup = ct.superclass();
+        return sup != null && sup.isEnum() ? sup : null;
+    }
+
     /** Ask to be told (without stopping) whenever a field of this student class is written. */
     private void watch(ReferenceType rt) {
         if (!watched.add(rt)) return;
@@ -253,6 +327,9 @@ public final class Tracer {
     }
 
     private boolean isUserCode(String typeName) {
+        // Classes the JVM generates at run time (lambdas Main$$Lambda/0x..., pattern switches
+        // Main$$TypeSwitch/0x...) carry the student's class name but aren't the student's code.
+        if (typeName.contains("$$") || typeName.contains("/")) return false;
         String outer = typeName.contains("$") ? typeName.substring(0, typeName.indexOf('$')) : typeName;
         return compiled.userClasses().contains(outer) || compiled.userClasses().contains(typeName);
     }
@@ -308,7 +385,7 @@ public final class Tracer {
             StringBuilder fs = new StringBuilder();
             Method m = f.location().method();
             fs.append("{\"id\":").append(ids.get(i))
-              .append(",\"method\":").append(Json.str(m.name().equals("<init>") ? "new " + simpleName(m.declaringType().name()) : m.name()))
+              .append(",\"method\":").append(Json.str(methodLabel(m)))
               .append(",\"cls\":").append(Json.str(m.declaringType().name()))
               .append(",\"line\":").append(f.location().lineNumber());
             String file = otherFile(f);
@@ -317,7 +394,7 @@ public final class Tracer {
             boolean first = true;
             ObjectReference self = m.isStatic() || m.isNative() ? null : f.thisObject();
             if (self != null) {
-                fs.append("{\"name\":\"this\",\"type\":").append(Json.str(simpleName(self.referenceType().name())))
+                fs.append("{\"name\":\"this\",\"type\":").append(Json.str(typeLabel(self.referenceType())))
                   .append(",\"v\":").append(value(self, toVisit)).append('}');
                 first = false;
             }
@@ -449,6 +526,8 @@ public final class Tracer {
         if (v instanceof ObjectReference o) {
             String boxed = unbox(o);
             if (boxed != null) return "{\"k\":\"p\",\"v\":" + Json.str(boxed) + "}";
+            String constant = enumConstant(o);
+            if (constant != null) return "{\"k\":\"p\",\"v\":" + Json.str(constant) + "}";
             toVisit.putIfAbsent(o.uniqueID(), o);
             return "{\"k\":\"r\",\"id\":" + o.uniqueID() + "}";
         }
@@ -483,7 +562,7 @@ public final class Tracer {
     }
 
     private String describe(ObjectReference o, Map<Long, ObjectReference> next) {
-        String type = simpleName(o.referenceType().name());
+        String type = typeLabel(o.referenceType());
         try {
             if (o instanceof ArrayReference arr) {
                 Integer len = arrayLengths.get(o.uniqueID());
@@ -498,8 +577,12 @@ public final class Tracer {
             if (!isUserCode(full)) {
                 return "{\"kind\":\"opaque\",\"type\":" + Json.str(type) + "}";
             }
-            List<Field> fields = instanceFields.computeIfAbsent(o.referenceType(),
-                    rt -> rt.allFields().stream().filter(f -> !f.isStatic() && !f.isSynthetic()).toList());
+            List<Field> fields = instanceFields.computeIfAbsent(o.referenceType(), rt -> rt.allFields().stream()
+                    .filter(f -> !f.isStatic() && !f.isSynthetic() && !f.declaringType().name().equals("java.lang.Enum")).toList());
+            ClassType enumType = enumTypeOf(o.referenceType());
+            if (enumType != null && fieldValue(o, "name") instanceof StringReference constant) {
+                type = typeLabel(enumType) + "." + constant.value(); // Planet.EARTH
+            }
             // Unchanged since last time? Only if every one of its fields is watched (a field inherited
             // from a library class isn't).
             boolean cacheable = watching && fields.stream().allMatch(f -> watched.contains(f.declaringType()));

@@ -80,6 +80,10 @@ Release builds check that repo's Releases page and show an **Update available** 
 - **Click a line number** to jump to the next time that line runs.
 - **Share** copies a link that reopens the program, its input, the open tab and the current step. Everything is packed into the link itself (after the `#`), so nothing is uploaded. If the browser won't allow copying, the link appears selected next to the button, ready for Ctrl+C. The link opens wherever JavaLens runs at the same address, for example `http://127.0.0.1:7070/` on another computer with JavaLens open.
 
+### Newer Java
+
+Records, enums, sealed interfaces with pattern-matching `switch`, lambdas and streams, anonymous and inner classes, and default methods all trace with the names you'd write: a lambda's body is a frame called `lambda in main`, `new Runnable() { ... }` is an `anonymous Runnable`, a plain enum value reads `Color.RED`, and an enum with fields is an object called `Planet.EARTH`. Classes the JVM generates behind the scenes (for lambdas and pattern switches) and the `values()` method javac adds to every enum are left out.
+
 ### Views (tabs on the right)
 
 - **Memory:** the call stack beside the heap, with an arrow for every reference.
