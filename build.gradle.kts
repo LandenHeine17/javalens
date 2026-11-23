@@ -291,7 +291,7 @@ val vscodeExtension = tasks.register<Exec>("vscodeExtension") {
     val ver = project.version.toString()
     val vsix = layout.buildDirectory.file("dist/javalens-$ver.vsix")
     inputs.dir("vscode/src")
-    inputs.files("vscode/package.json", "vscode/README.md", "vscode/tsconfig.json", "vscode/.vscodeignore")
+    inputs.files("vscode/package.json", "vscode/README.md", "vscode/tsconfig.json", "vscode/.vscodeignore", "LICENSE")
     inputs.file(tasks.jar.flatMap { it.archiveFile })
     inputs.property("version", ver)
     outputs.file(vsix)
@@ -300,10 +300,11 @@ val vscodeExtension = tasks.register<Exec>("vscodeExtension") {
         // The server and icon ship inside the extension; the version follows the app's.
         copy { from(tasks.jar.flatMap { it.archiveFile }); into("vscode/server") }
         copy { from(layout.buildDirectory.file("icons/icon.png")); into("vscode") }
+        copy { from("LICENSE"); into("vscode") } // the Marketplace shows it on the extension's page
         vsix.get().asFile.parentFile.mkdirs()
     }
     commandLine(
         if (isWindows) "npx.cmd" else "npx", "--no-install", "@vscode/vsce", "package",
-        "--skip-license", "--no-update-package-json", ver, "-o", vsix.get().asFile.absolutePath,
+        "--no-update-package-json", ver, "-o", vsix.get().asFile.absolutePath,
     )
 }

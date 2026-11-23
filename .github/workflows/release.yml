@@ -99,6 +99,30 @@ jobs:
           path: build/dist/*
           if-no-files-found: error
 
+  # Publishes the VS Code extension to the Visual Studio Marketplace, so everyone who installed it
+  # from there gets the update automatically. Needs the VSCE_PAT secret (an Azure DevOps token with
+  # Marketplace > Manage, for the publisher in vscode/package.json).
+  publish-vscode:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: javalens-Linux
+          path: dist
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Publish to the Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          vsix=$(ls dist/javalens-*.vsix)
+          npx --yes @vscode/vsce@3.2.1 publish --packagePath "$vsix"
+
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
@@ -126,7 +150,8 @@ jobs:
 
             Java is included; nothing else to install.
 
-            **VS Code extension:** download `javalens-*.vsix`, then in VS Code run *Extensions: Install from VSIX...* and pick it.
+            **VS Code extension:** search for **JavaLens** in VS Code's Extensions view and install it; it updates itself.
+            (Or download `javalens-*.vsix` and run *Extensions: Install from VSIX...*.)
             Open a `.java` file and click the eye button in the editor's title bar. The extension needs a **JDK 25** installed.
 
             **First launch:** the app isn't code-signed, so:
