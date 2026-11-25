@@ -57,7 +57,15 @@ class TracerTest {
     void everySampleRunsToTheEnd(String name, String expectedStdout) throws Exception {
         String json = trace(sample(name), "");
         assertTrue(json.contains("\"end\":\"finished\""), name + " did not finish: " + json.substring(0, Math.min(300, json.length())));
-        assertEquals("\"" + expectedStdout + "\"", stdoutOf(json));
+        String out = stdoutOf(json);
+        // A program that ends with an uncaught exception (Exceptions) also prints Java's
+        // "Exception in thread ..." stack trace; whether it arrives before the program is gone
+        // depends on timing (it does on Windows), so it may or may not follow the expected output.
+        String expected = "\"" + expectedStdout + "\"";
+        if (!out.equals(expected)) {
+            String head = expected.substring(0, expected.length() - 1);
+            assertTrue(out.startsWith(head + "Exception in thread "), name + ": expected " + expected + " but was " + out);
+        }
     }
 
     @Test
