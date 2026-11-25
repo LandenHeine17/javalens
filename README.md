@@ -12,7 +12,7 @@ Download the installer for your computer from the project's **Releases** page. J
 | macOS (Apple Silicon) | `.dmg` | `-macos-portable.zip` |
 | Linux | `.deb` (`.rpm` when built on Fedora) | `-linux-portable.tar.gz` |
 
-**VS Code:** search for **JavaLens** in the Extensions view (or install it from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=JavaLens.javalens)); VS Code keeps it up to date. You can also download `javalens-x.y.z.vsix` from the Releases page and use *Extensions: Install from VSIX...*, but then it won't update itself. Open a `.java` file and click the eye button in the editor's title bar: the visualizer opens beside your code, highlights the line being run, and re-runs as you type. Multi-file projects with packages work too (for example a class lab with `src/edu/.../Application.java` importing its model classes): the extension sends the whole project, and stepping into another file opens it like a debugger. The extension needs a JDK 25 installed (it looks at the `javalens.javaHome` setting, then `JAVA_HOME`, then the `java` on your PATH).
+**VS Code, VSCodium, Cursor:** search for **JavaLens** in the Extensions view and install it; the editor keeps it up to date. It's on the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=JavaLens.javalens) (VS Code) and [Open VSX](https://open-vsx.org/extension/JavaLens/javalens) (VSCodium, Cursor and other VS Code-based editors). You can also download `javalens-x.y.z.vsix` from the Releases page and use *Extensions: Install from VSIX...*, but then it won't update itself. Open a `.java` file and click the eye button in the editor's title bar: the visualizer opens beside your code, highlights the line being run, and re-runs as you type. Multi-file projects with packages work too (for example a class lab with `src/edu/.../Application.java` importing its model classes): the extension sends the whole project, and stepping into another file opens it like a debugger. The extension needs a JDK 25 installed (it looks at the `javalens.javaHome` setting, then `JAVA_HOME`, then the `java` on your PATH).
 
 When you launch it, JavaLens opens in your browser and shows a small window with **Open** and **Quit**. Closing that window quits JavaLens. Launching it a second time just reopens the browser.
 
@@ -49,6 +49,8 @@ Push a version tag. GitHub Actions then builds the Windows, macOS and Linux vers
 git tag v1.1.0
 git push origin v1.1.0
 ```
+
+The release also publishes the VS Code extension to the Visual Studio Marketplace and to Open VSX (`.github/workflows/publish-extension.yml`, using the `VSCE_PAT` and `OVSX_PAT` repository secrets). If one store fails (an expired token, say), fix it and re-run just that store: Actions tab → *Publish extension* → *Run workflow*, with the tag.
 
 Release builds check that repo's Releases page and show an **Update available** badge in the header when there's a newer version. Local builds skip the check unless `updateRepo` is set in `gradle.properties`.
 
