@@ -8,6 +8,7 @@ import { buildLayout } from './memoryLayout';
 import CallTree from './CallTree';
 import Growth from './Growth';
 import Timeline from './Timeline';
+import Splitter from './Splitter';
 import {
   AArrowDown, AArrowUp, ArrowDownUp, Binary, BookOpen, Bug, Check, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers,
   LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, RectangleVertical, Share2, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
@@ -48,6 +49,12 @@ export function projectFields(project: Project | null): Record<string, string> {
   return out;
 }
 const baseName = (p: string) => p.slice(p.lastIndexOf('/') + 1);
+
+const STACKED_QUERY = '(max-width: 900px)';
+const DEFAULT_CODE_SPLIT = 0.47;
+const DEFAULT_OUTPUT_HEIGHT = 150;
+const MIN_DIAGRAM = 120; // px the diagram always keeps
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 /** Where an exception goes from here, in plain words (the banner under the tabs). */
 function exceptionPath(step: Step, code: string): string {
@@ -110,6 +117,15 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(() => load('tab', 'memory'));
   const [showCounts, setShowCounts] = useState(() => load('counts', false));
   const [showCode, setShowCode] = useState(!IN_VSCODE);
+  // Panel sizes, remembered: code vs visualizer (fraction of the width, or height when stacked),
+  // and the Output box (pixels, or closed).
+  const [codeSplit, setCodeSplit] = useState(() => load('codeSplit', DEFAULT_CODE_SPLIT));
+  const [outputHeight, setOutputHeight] = useState(() => load('outputHeight', DEFAULT_OUTPUT_HEIGHT));
+  const [outputOpen, setOutputOpen] = useState(() => load('outputOpen', true));
+  const [stacked, setStacked] = useState(() => window.matchMedia?.(STACKED_QUERY).matches ?? false);
+  const mainRef = useRef<HTMLElement>(null);
+  const rightRef = useRef<HTMLElement>(null);
+  const viewRef = useRef<HTMLDivElement>(null);
   // The first visit follows the computer's light/dark setting; after that, the user's choice.
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     params.get('theme') === 'light' ? 'light' : params.get('theme') === 'dark' ? 'dark' : load('theme', window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
@@ -167,6 +183,17 @@ export default function App() {
   useEffect(() => save('fontSize', fontSize), [fontSize]);
   useEffect(() => save('tab', tab), [tab]);
   useEffect(() => save('counts', showCounts), [showCounts]);
+  useEffect(() => save('codeSplit', codeSplit), [codeSplit]);
+  useEffect(() => save('outputHeight', outputHeight), [outputHeight]);
+  useEffect(() => save('outputOpen', outputOpen), [outputOpen]);
+  // Narrow windows (or a zoomed-in panel) put the code above the visualizer instead of beside it.
+  useEffect(() => {
+    const mq = window.matchMedia?.(STACKED_QUERY);
+    if (!mq) return;
+    const onChange = () => setStacked(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     save('theme', theme);
@@ -401,7 +428,15 @@ export default function App() {
         )}
       </header>
 
-      <main className={showCode ? '' : 'no-code'}>
+      <main
+        ref={mainRef}
+        className={showCode ? (stacked ? 'stacked' : '') : 'no-code'}
+        style={
+          showCode
+            ? { [stacked ? 'gridTemplateRows' : 'gridTemplateColumns']: `minmax(0, ${codeSplit}fr) 12px minmax(0, ${1 - codeSplit}fr)` }
+            : undefined
+        }
+      >
         {showCode && (
           <section className="left card">
             <div className="editor-wrap">
@@ -419,8 +454,21 @@ export default function App() {
             {showStdin && stdinPanel}
           </section>
         )}
+        {showCode && (
+          <Splitter
+            direction={stacked ? 'rows' : 'columns'}
+            label={stacked ? 'Code and visualizer heights' : 'Code and visualizer widths'}
+            value={codeSplit}
+            reset={DEFAULT_CODE_SPLIT}
+            onChange={setCodeSplit}
+            fromDrag={(start, d) => {
+              const size = stacked ? mainRef.current?.clientHeight : mainRef.current?.clientWidth;
+              return clamp(start + d / (size || 1), 0.2, 0.8);
+            }}
+          />
+        )}
 
-        <section className="right card">
+        <section className="right card" ref={rightRef}>
           <Timeline
             steps={steps}
             index={index}
@@ -483,7 +531,7 @@ export default function App() {
             </div>
           )}
 
-          <div className="view-scroll">
+          <div className="view-scroll" ref={viewRef}>
             {tab === 'memory' && <MemoryView step={step} prev={steps[index - 1]} indexNames={indexNames} steps={steps} index={index} gridVars={gridVars} />}
             {tab === 'map' && <MemoryMap step={step} prev={steps[index - 1]} layout={layout} />}
             {tab === 'algo' && <AlgoView steps={steps} index={index} code={code} project={project} stdin={stdin} samples={samples} />}
@@ -493,12 +541,40 @@ export default function App() {
           </div>
           {!showCode && showStdin && stdinPanel}
           {tab !== 'growth' && (
-            <div className="output">
-              <div className="panel-title">
-                <Terminal size={13} /> Output
+            <>
+              {outputOpen && (
+                <Splitter
+                  direction="rows"
+                  label="Output height"
+                  value={outputHeight}
+                  reset={DEFAULT_OUTPUT_HEIGHT}
+                  onChange={setOutputHeight}
+                  fromDrag={(start, d) => {
+                    // dragging up makes Output taller; the diagram keeps at least MIN_DIAGRAM
+                    const card = rightRef.current?.getBoundingClientRect();
+                    const view = viewRef.current?.getBoundingClientRect();
+                    const max = card && view ? card.bottom - view.top - MIN_DIAGRAM : 600;
+                    return Math.round(clamp(start - d, 56, Math.max(56, max)));
+                  }}
+                />
+              )}
+              <div
+                className={'output' + (outputOpen ? '' : ' closed')}
+                style={outputOpen ? { ['--out-h' as string]: `${outputHeight}px` } : undefined}
+              >
+                <button
+                  className="panel-title output-toggle"
+                  onClick={() => setOutputOpen(!outputOpen)}
+                  aria-expanded={outputOpen}
+                  title={outputOpen ? 'Hide the output' : 'Show the output'}
+                >
+                  <Terminal size={13} /> Output
+                  {!outputOpen && output && <span className="muted">({output.split('\n').filter(Boolean).length} lines)</span>}
+                  <ChevronDown size={13} className={'chev' + (outputOpen ? '' : ' closed')} />
+                </button>
+                {outputOpen && <pre>{output || <span className="muted">nothing printed yet</span>}</pre>}
               </div>
-              <pre>{output || <span className="muted">nothing printed yet</span>}</pre>
-            </div>
+            </>
           )}
         </section>
       </main>
