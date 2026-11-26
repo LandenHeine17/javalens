@@ -73,9 +73,17 @@ export default function MemoryView({ step, prev, indexNames, steps, index, gridV
     return () => ro.disconnect();
   }, [step]);
 
-  // Deep recursion pushes the running call down the page: keep it visible.
+  // Deep recursion pushes the running call down the page: keep it visible. Only scroll up or down,
+  // and only when it's out of view: scrolling sideways would undo the user scrolling over to see
+  // the end of a long array (scrollIntoView scrolls both ways).
   useLayoutEffect(() => {
-    wrapRef.current?.querySelector('.frame.top')?.scrollIntoView({ block: 'nearest' });
+    const frame = wrapRef.current?.querySelector<HTMLElement>('.frame.top');
+    const scroller = wrapRef.current?.closest<HTMLElement>('.view-scroll');
+    if (!frame || !scroller) return;
+    const f = frame.getBoundingClientRect();
+    const s = scroller.getBoundingClientRect();
+    if (f.top < s.top) scroller.scrollTop -= s.top - f.top + 8;
+    else if (f.bottom > s.bottom) scroller.scrollTop += Math.min(f.bottom - s.bottom + 8, f.top - s.top - 8);
   }, [step]);
 
   if (!step) return <div className="memory empty">Run the program to see memory.</div>;
