@@ -330,7 +330,7 @@ export function firstSeen(steps: Step[]): Map<number, number> {
 
 /**
  * The numeric values a frame's variable has held, from the call's start up to step `upto`
- * (never later, so it can't give away what happens next in Predict mode). Empty if it isn't a number.
+ * (never later than the current step). Empty if it isn't a number.
  */
 export function valueHistory(steps: Step[], frameId: number, name: string, upto: number): { step: number; v: number }[] {
   const out: { step: number; v: number }[] = [];

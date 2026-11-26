@@ -46,7 +46,7 @@ monaco.editor.defineTheme('javalens', {
   },
 });
 
-// Light version for projectors (colors match the light tokens in styles.css).
+// Light version (colors match the light tokens in styles.css).
 monaco.editor.defineTheme('javalens-light', {
   base: 'vs',
   inherit: true,

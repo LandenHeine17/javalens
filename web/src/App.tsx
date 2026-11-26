@@ -9,8 +9,8 @@ import CallTree from './CallTree';
 import Growth from './Growth';
 import Timeline from './Timeline';
 import {
-  AArrowDown, AArrowUp, ArrowDownUp, Binary, BookOpen, Bug, Check, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers, Lightbulb,
-  LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, Presentation, RectangleVertical, Share2, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
+  AArrowDown, AArrowUp, ArrowDownUp, Binary, BookOpen, Bug, Check, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers,
+  LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, RectangleVertical, Share2, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
 } from 'lucide-react';
 import { exceptionName, firstSeen, handlerKind, indexVariableNames, lineCounts, stepChanges, unwoundFrames } from './analysis';
 import { defaultSample, samples } from './samples';
@@ -110,13 +110,10 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(() => load('tab', 'memory'));
   const [showCounts, setShowCounts] = useState(() => load('counts', false));
   const [showCode, setShowCode] = useState(!IN_VSCODE);
-  const [presenting, setPresenting] = useState(false);
-  // Light theme reads better on most projectors; first visit follows the computer's setting.
+  // The first visit follows the computer's light/dark setting; after that, the user's choice.
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     params.get('theme') === 'light' ? 'light' : params.get('theme') === 'dark' ? 'dark' : load('theme', window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
   );
-  const [predict, setPredict] = useState(false);
-  const [awaitingReveal, setAwaitingReveal] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const [appVersion, setAppVersion] = useState<{ version: string; latest: string | null; url: string | null; classMode?: boolean } | null>(null);
   const [shareNote, setShareNote] = useState<string | null>(null);
@@ -134,7 +131,6 @@ export default function App() {
         if (s.stdin) setShowStdin(true);
         if (s.tab && (TABS as string[]).includes(s.tab)) setTab(s.tab as Tab);
         setPlaying(false);
-        setAwaitingReveal(false);
         setIndexRaw(s.step ?? 0); // the run that follows keeps this step (it only clamps it)
         history.replaceState(null, '', location.pathname + location.search);
       });
@@ -176,25 +172,8 @@ export default function App() {
     save('theme', theme);
   }, [theme]);
 
-  /**
-   * Predict mode: stepping forward first pauses with "what happens next?";
-   * the next forward press reveals the step.
-   */
-  const setIndex = useCallback(
-    (i: number) => {
-      if (predict && i === index + 1 && !awaitingReveal) {
-        setAwaitingReveal(true);
-        return;
-      }
-      setAwaitingReveal(false);
-      setIndexRaw(i);
-    },
-    [predict, index, awaitingReveal],
-  );
-  const jumpTo = useCallback((i: number) => {
-    setAwaitingReveal(false);
-    setIndexRaw(i);
-  }, []);
+  const setIndex = setIndexRaw;
+  const jumpTo = setIndexRaw;
 
   const run = useCallback(async (source: string, input: string, proj: Project | null) => {
     if (!source.trim()) return; // nothing to run yet (VS Code mode before the file arrives)
@@ -270,11 +249,6 @@ export default function App() {
     }
   };
 
-  const togglePresent = () => {
-    setPresenting((p) => !p);
-    setFontSize((f) => (presenting ? Math.max(12, f - 6) : Math.min(32, f + 6)));
-  };
-
   // ---- VS Code mode: code and theme come in; the current line and compile errors go out.
   useEffect(() => {
     if (!IN_VSCODE) return;
@@ -322,7 +296,7 @@ export default function App() {
   const StatusIcon = status.kind === 'running' ? LoaderCircle : status.kind === 'ok' ? CircleCheck : status.kind === 'idle' ? null : CircleAlert;
 
   return (
-    <div className={'app' + (presenting ? ' presenting' : '')} style={{ ['--fs' as string]: `${fontSize}px` }}>
+    <div className="app" style={{ ['--fs' as string]: `${fontSize}px` }}>
       <header>
         <div className="brand" title={appVersion ? `JavaLens ${appVersion.version}` : 'JavaLens'}>
           <span className="logo-mark" aria-hidden>
@@ -383,22 +357,12 @@ export default function App() {
 
         <div className="spacer" />
 
-        <div className="segmented" role="group" aria-label="Teaching tools">
+        <div className="segmented" role="group" aria-label="Tools">
           <button onClick={() => setShowStdin(!showStdin)} className={showStdin ? 'on' : ''} title="Input for Scanner">
             <Keyboard size={15} /> <span className="lbl">Input</span>
           </button>
           <button onClick={() => setShowCounts(!showCounts)} className={showCounts ? 'on' : ''} title="Show how many times each line has run">
             <Hash size={15} /> <span className="lbl">Counts</span>
-          </button>
-          <button
-            onClick={() => {
-              setPredict(!predict);
-              setAwaitingReveal(false);
-            }}
-            className={predict ? 'on' : ''}
-            title="Predict mode: pause before each step so the class can guess what happens"
-          >
-            <Lightbulb size={15} /> <span className="lbl">Predict</span>
           </button>
         </div>
 
@@ -408,9 +372,6 @@ export default function App() {
               {showCode ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />} <span className="lbl">Code</span>
             </button>
           )}
-          <button onClick={togglePresent} className={presenting ? 'on' : ''} title="Bigger text for the projector">
-            <Presentation size={15} /> <span className="lbl">Present</span>
-          </button>
           <button onClick={() => setFontSize((f) => Math.max(12, f - 2))} title="Smaller text">
             <AArrowDown size={16} />
           </button>
@@ -419,7 +380,7 @@ export default function App() {
           </button>
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            title={theme === 'dark' ? 'Switch to light theme (better on projectors)' : 'Switch to dark theme'}
+            title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
             aria-label="Toggle light / dark theme"
           >
             {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
@@ -498,7 +459,6 @@ export default function App() {
             ).map(([t, label, Icon]) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'tab active' : 'tab'} onClick={() => setTab(t)}>
                 <Icon size={15} /> {label}
-                {t === 'space' && <span className="tab-beta">beta</span>}
               </button>
             ))}
             {!showCode && step && (
@@ -530,22 +490,6 @@ export default function App() {
             {tab === 'space' && <AddressSpace steps={steps} step={step} prev={steps[index - 1]} index={index} layout={layout} />}
             {tab === 'tree' && <CallTree steps={steps} index={index} onPick={jumpTo} fontSize={fontSize} />}
             {tab === 'growth' && <Growth code={code} stdin={stdin} extra={projectFields(project)} />}
-            {awaitingReveal && tab !== 'growth' && (
-              <div className="predict-overlay">
-                <div className="predict-card">
-                  <div className="predict-title">
-                    <Lightbulb size={20} /> Predict
-                  </div>
-                  <div>
-                    Line <b>{step?.line}</b> is about to run. What will change?
-                  </div>
-                  {step && <code className="predict-code">{code.split('\n')[step.line - 1]?.trim()}</code>}
-                  <div className="muted">
-                    Press <kbd>→</kbd> to reveal
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
           {!showCode && showStdin && stdinPanel}
           {tab !== 'growth' && (
