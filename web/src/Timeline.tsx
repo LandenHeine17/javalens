@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import type { Step } from './types';
 import {
   ChevronFirst, ChevronLast, CornerLeftUp, Gauge, Pause, Play, Redo2, StepBack, StepForward, Undo2,
@@ -12,6 +12,10 @@ interface Props {
   setPlaying: (p: boolean) => void;
   speed: number; // steps per second
   setSpeed: (s: number) => void;
+  /** One slim row: no depth chart or slider (the "collapse the top" mode). */
+  compact?: boolean;
+  /** Extra controls at the end of the buttons row (compact mode puts the tab picker there). */
+  extra?: ReactNode;
 }
 
 /** Index of the next step whose stack depth is <= depth (used by "step over" / "step out"). */
@@ -24,7 +28,7 @@ function findBackward(steps: Step[], from: number, maxDepth: number) {
   return 0;
 }
 
-export default function Timeline({ steps, index, setIndex, playing, setPlaying, speed, setSpeed }: Props) {
+export default function Timeline({ steps, index, setIndex, playing, setPlaying, speed, setSpeed, compact, extra }: Props) {
   const last = steps.length - 1;
   const depth = steps[index]?.stack.length ?? 1;
   const go = (i: number) => setIndex(Math.max(0, Math.min(last, i)));
@@ -58,10 +62,11 @@ export default function Timeline({ steps, index, setIndex, playing, setPlaying, 
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  if (steps.length === 0) return <div className="timeline" />;
+  const cls = 'timeline' + (compact ? ' compact' : '');
+  if (steps.length === 0) return <div className={cls}>{extra && <div className="buttons">{extra}</div>}</div>;
 
   return (
-    <div className="timeline">
+    <div className={cls}>
       <div className="buttons">
         <div className="segmented transport">
           <button onClick={() => go(0)} title="First step (Home)">
@@ -102,7 +107,9 @@ export default function Timeline({ steps, index, setIndex, playing, setPlaying, 
         <span className="step-count">
           Step <b>{index + 1}</b> <span className="muted">of {steps.length}</span>
         </span>
+        {extra}
       </div>
+      {!compact && (
       <div className="scrubber">
         {/* A mini chart of stack depth over time: recursion shows up as mountains. */}
         <DepthStrip steps={steps} index={index} onPick={go} />
@@ -120,6 +127,7 @@ export default function Timeline({ steps, index, setIndex, playing, setPlaying, 
           aria-label="Step"
         />
       </div>
+      )}
     </div>
   );
 }

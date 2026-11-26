@@ -11,7 +11,7 @@ import Timeline from './Timeline';
 import Splitter from './Splitter';
 import {
   AArrowDown, AArrowUp, ArrowDownUp, Binary, BookOpen, Bug, Check, ChevronDown, CircleAlert, CircleCheck, Hash, Keyboard, Layers,
-  LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, RectangleVertical, Share2, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
+  LoaderCircle, Network, Moon, PanelLeftClose, PanelLeftOpen, Play, RectangleVertical, Share2, ChevronsDown, ChevronsUp, Sparkles, Sun, Terminal, TrendingUp, TriangleAlert,
 } from 'lucide-react';
 import { exceptionName, firstSeen, handlerKind, indexVariableNames, lineCounts, stepChanges, unwoundFrames } from './analysis';
 import { defaultSample, samples } from './samples';
@@ -73,6 +73,14 @@ function exceptionPath(step: Step, code: string): string {
 
 type Status = { kind: 'idle' | 'running' | 'ok' | 'compile' | 'error'; text: string };
 type Tab = 'memory' | 'map' | 'space' | 'algo' | 'tree' | 'growth';
+const TAB_LIST: [Tab, string, typeof Layers][] = [
+  ['memory', 'Memory', Layers],
+  ['map', 'Memory map', Binary],
+  ['space', 'Memory layout', RectangleVertical],
+  ['algo', 'Sort & Search', ArrowDownUp],
+  ['tree', 'Call tree', Network],
+  ['growth', 'Growth', TrendingUp],
+];
 const TABS: Tab[] = ['memory', 'map', 'space', 'algo', 'tree', 'growth'];
 
 function load<T>(key: string, fallback: T): T {
@@ -122,6 +130,8 @@ export default function App() {
   const [codeSplit, setCodeSplit] = useState(() => load('codeSplit', DEFAULT_CODE_SPLIT));
   const [outputHeight, setOutputHeight] = useState(() => load('outputHeight', DEFAULT_OUTPUT_HEIGHT));
   const [outputOpen, setOutputOpen] = useState(() => load('outputOpen', true));
+  // The top folded into one slim bar, for small or zoomed-in screens.
+  const [compactTop, setCompactTop] = useState(() => load('compactTop', false));
   const [stacked, setStacked] = useState(() => window.matchMedia?.(STACKED_QUERY).matches ?? false);
   const mainRef = useRef<HTMLElement>(null);
   const rightRef = useRef<HTMLElement>(null);
@@ -186,6 +196,7 @@ export default function App() {
   useEffect(() => save('codeSplit', codeSplit), [codeSplit]);
   useEffect(() => save('outputHeight', outputHeight), [outputHeight]);
   useEffect(() => save('outputOpen', outputOpen), [outputOpen]);
+  useEffect(() => save('compactTop', compactTop), [compactTop]);
   // Narrow windows (or a zoomed-in panel) put the code above the visualizer instead of beside it.
   useEffect(() => {
     const mq = window.matchMedia?.(STACKED_QUERY);
@@ -324,7 +335,7 @@ export default function App() {
 
   return (
     <div className="app" style={{ ['--fs' as string]: `${fontSize}px` }}>
-      <header>
+      <header className={compactTop ? 'hidden' : undefined}>
         <div className="brand" title={appVersion ? `JavaLens ${appVersion.version}` : 'JavaLens'}>
           <span className="logo-mark" aria-hidden>
             <Layers size={16} strokeWidth={2.4} />
@@ -477,8 +488,33 @@ export default function App() {
             setPlaying={setPlaying}
             speed={speed}
             setSpeed={setSpeed}
+            compact={compactTop}
+            extra={
+              compactTop && (
+                <div className="compact-extra">
+                  {!live && (
+                    <button onClick={() => run(code, stdin, project)} title="Run the program now" aria-label="Run">
+                      <Play size={14} fill="currentColor" />
+                    </button>
+                  )}
+                  <select value={tab} onChange={(e) => setTab(e.target.value as Tab)} aria-label="View" title="View">
+                    {TAB_LIST.map(([t, label]) => (
+                      <option key={t} value={t}>{label}</option>
+                    ))}
+                  </select>
+                  {StatusIcon && (
+                    <span className={`status-icon ${status.kind}`} title={status.text}>
+                      <StatusIcon size={15} className={status.kind === 'running' ? 'spin' : undefined} />
+                    </span>
+                  )}
+                  <button onClick={() => setCompactTop(false)} title="Show the full top bar again" aria-label="Expand the top bar">
+                    <ChevronsDown size={15} />
+                  </button>
+                </div>
+              )
+            }
           />
-          {tab !== 'growth' && step && (
+          {!compactTop && tab !== 'growth' && step && (
             <div className="changes" aria-live="polite" title="What the last step changed">
               <span className="changes-label">{index === 0 ? 'start' : 'changed'}</span>
               {index === 0 ? (
@@ -494,17 +530,8 @@ export default function App() {
               )}
             </div>
           )}
-          <nav className="tabs" role="tablist">
-            {(
-              [
-                ['memory', 'Memory', Layers],
-                ['map', 'Memory map', Binary],
-                ['space', 'Memory layout', RectangleVertical],
-                ['algo', 'Sort & Search', ArrowDownUp],
-                ['tree', 'Call tree', Network],
-                ['growth', 'Growth', TrendingUp],
-              ] as [Tab, string, typeof Layers][]
-            ).map(([t, label, Icon]) => (
+          <nav className={'tabs' + (compactTop ? ' hidden' : '')} role="tablist">
+            {TAB_LIST.map(([t, label, Icon]) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'tab active' : 'tab'} onClick={() => setTab(t)}>
                 <Icon size={15} /> {label}
               </button>
@@ -514,6 +541,14 @@ export default function App() {
                 {step.file && <b>{baseName(step.file)} · </b>}line {step.line}
               </span>
             )}
+            <button
+              className="tab-collapse"
+              onClick={() => setCompactTop(true)}
+              title="Fold the top into one slim bar (more room for the diagram)"
+              aria-label="Collapse the top bar"
+            >
+              <ChevronsUp size={15} />
+            </button>
           </nav>
           {tab !== 'growth' && step?.exception && (
             <div className={'banner ' + (step.caught ? 'catch' : 'error')}>
@@ -550,10 +585,13 @@ export default function App() {
                   reset={DEFAULT_OUTPUT_HEIGHT}
                   onChange={setOutputHeight}
                   fromDrag={(start, d) => {
-                    // dragging up makes Output taller; the diagram keeps at least MIN_DIAGRAM
+                    // dragging up makes Output taller; the diagram keeps at least MIN_DIAGRAM, and on a
+                    // small panel Output stays within the same cap as its CSS (styles.css .output)
                     const card = rightRef.current?.getBoundingClientRect();
                     const view = viewRef.current?.getBoundingClientRect();
-                    const max = card && view ? card.bottom - view.top - MIN_DIAGRAM : 600;
+                    const max = card && view
+                      ? Math.min(card.bottom - view.top - MIN_DIAGRAM, Math.max(0.35 * card.height, card.height - 360))
+                      : 600;
                     return Math.round(clamp(start - d, 56, Math.max(56, max)));
                   }}
                 />

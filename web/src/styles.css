@@ -440,6 +440,18 @@ main > .splitter.rows::after { left: 0; right: 0; top: 5px; height: 2px; }
 .tab.active { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
 .tab.active svg { color: var(--accent); }
 .tab-line { margin-left: auto; color: var(--muted); font-size: 12.5px; }
+.tab-collapse { margin-left: auto; padding: 4px 8px; align-self: center; }
+.tab-line + .tab-collapse { margin-left: 8px; }
+
+/* ---------- the top folded into one bar (small or zoomed-in screens) */
+header.hidden, .tabs.hidden { display: none; }
+.timeline.compact { padding: 6px 10px; }
+.timeline.compact .play { width: 32px; height: 32px; }
+.compact-extra { display: flex; align-items: center; gap: 6px; }
+.compact-extra button, .compact-extra select { padding: 5px 8px; }
+.status-icon { display: inline-flex; color: var(--muted); }
+.status-icon.compile, .status-icon.error { color: var(--error-text); }
+.status-icon.ok { color: var(--green); }
 
 /* ---------- memory diagram */
 .view-scroll { flex: 1; overflow: auto; min-height: 120px; position: relative; }
@@ -701,7 +713,14 @@ table.grid { border-collapse: separate; border-spacing: 0; font-family: var(--mo
 .grid td.grid-none { color: var(--faint); font-style: italic; border: 0; background: none; }
 
 /* ---------- output */
-.output { border-top: 1px solid var(--border); flex: 0 1 var(--out-h, 150px); min-height: 0; display: flex; flex-direction: column; }
+.output {
+  border-top: 1px solid var(--border);
+  /* the saved height, but on a small (or zoomed-in) panel at most about a third of it: the diagram comes first */
+  flex: 0 1 min(var(--out-h, 150px), max(35%, 100% - 360px));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .output.closed { flex: none; }
 .output pre {
   margin: 0;
