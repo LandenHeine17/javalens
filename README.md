@@ -65,7 +65,7 @@ Release builds check that repo's Releases page and show an **Update available** 
 | `vscode/` | The VS Code extension: starts the server with the user's JDK and shows the page in a panel |
 | `samples/` | Lesson programs. They appear in the Examples menu and are also run by the tests. |
 
-## Using it in lecture
+## Using it
 
 - **Live** mode re-runs about half a second after you stop typing. Compile errors show as red squiggles, and the last good run stays on screen.
 - **Keys** (when the editor isn't focused):
@@ -74,9 +74,9 @@ Release builds check that repo's Releases page and show an **Update available** 
   - `Home` / `End` jump to the first or last step.
   - `Space` plays or pauses.
 - **The line under the timeline** says in plain words what the last step changed: `sum: 3 → 6`, `a[2] = 5`, `new Node`, `call fib(n=4)`, `fib() returned 3`.
-- **Hover a number variable** in the Memory tab to see a small chart of the values it has held so far in that call (never ahead of the current step, so Predict mode isn't spoiled).
+- **Hover a number variable** in the Memory tab to see a small chart of the values it has held so far in that call (up to the current step).
 - **The blue strip under the slider** charts stack depth over time. Each recursive call is a hill. Click the strip to jump to that point.
-- **A− / A+** change the text size for projectors.
+- **A− / A+** change the size of the code and diagram text (the buttons and tabs follow your browser's or editor's zoom).
 - **Input** opens a text box for what the program reads through `Scanner`.
 - **Examples** lists every `.java` file in `samples/`. To add a lesson, drop in a new file; the page reloads to pick it up.
 - **Click a line number** to jump to the next time that line runs.
@@ -96,18 +96,18 @@ Records, enums, sealed interfaces with pattern-matching `switch`, lambdas and st
   - **Collections:** `Stack`, `ArrayDeque`, `LinkedList`, `ArrayList`, `HashMap`, `TreeMap`, `HashSet`, `List.of` and similar are shown as their contents. A Stack has its top marked, and a queue has its front and back marked.
 - **Exceptions**, caught or not, stop on the line that throws. The banner says where the exception goes: *caught at line 27 in main()*, *it jumps to the finally block at line 17 first*, or *nothing catches it, so the program stops here*. The calls it ends early are marked **unwinding** in the Memory tab, the call that catches it says **catches it**, the editor marks the line it lands on, and the Call tree shows those calls with ✕ and the exception instead of a return value. Try the **Exceptions** example.
 - **Memory map:** memory as rows of addresses in three tables: Static area, Stack and Heap. Each slot shows its address, size in bytes, type, name and value, and a reference shows the address it holds. Static fields get a `static` badge, final fields and variables a `final` badge, and String literals are shown in the string pool, so `==` versus `.equals` makes sense. The addresses are a teaching model (a 64-bit JVM with 8-byte references and 16-byte object headers), not the JVM's real ones.
-- **Memory layout (beta):** the same memory drawn as one rectangle. From the top: code, static data, then the heap growing down; free space in the middle; the stack at the bottom growing up. Blocks take up space roughly in proportion to their size, objects that nothing points to stay as faded garbage, and clicking anything shows what's stored there. **Fit to screen** (on by default) shrinks the picture so all of memory fits without scrolling; click **Code** to list each class's methods. Try the **MemoryModel** example.
+- **Memory layout:** the same memory drawn as one rectangle. From the top: code, static data, then the heap growing down; free space in the middle; the stack at the bottom growing up. Blocks take up space roughly in proportion to their size, objects that nothing points to stay as faded garbage, and clicking anything shows what's stored there. **Fit to screen** (on by default) shrinks the picture so all of memory fits without scrolling; click **Code** to list each class's methods. Try the **MemoryModel** example.
 - **Sort & Search:** the array your program sorts or searches, drawn as bars. Cells being compared light up blue, writes and swaps amber (with an arrow for each swap), cells in their final place turn green, and cells outside the running call's range fade, so binary search visibly rules out half each time. Index variables (`i`, `j`, `mid`...) point at the cells they index, brackets show each recursive call's `lo..hi` range (merge sort and quick sort splitting the array), merge sort's `left`/`right` arrays appear underneath, and quick sort's `pivot` is a dashed line. Live counters show comparisons, swaps, writes and steps. **Race** runs a second sample on the same input side by side; the one needing fewer steps finishes first. Samples: BubbleSort, SelectionSort, InsertionSort, MergeSort, QuickSort, LinearSearch, BinarySearch.
 - **Call tree:** every method call as a box, with its return value written in. The path to the running call is highlighted. Click a box to jump to that call. This is good for showing why naive `fib` is slow.
 - **Growth (Big-O):** add `// @vary 1..20` after the line that sets the size variable, for example `int n = 8; // @vary 1..20`. JavaLens re-runs the program for several values of `n` and counts the lines executed each time. It charts the results and names the best-fitting growth rate, from O(1) through O(2ⁿ).
 
-### Teaching modes (header buttons)
+### Header buttons and layout
 
 - **Counts** writes `×N` beside each line to show how many times it has run so far, and tints the hot lines.
-- **Predict** makes every step forward pause first and show "line N is about to run, what will change?". Press → again to reveal what happened.
-- **Hide code** gives the diagram the whole screen.
-- **Present** enlarges the text and trims the header for the projector.
-- **Sun/moon button** switches between the dark and light themes. Light is usually easier to read on a projector, and your choice is remembered.
+- **Code** hides the code to give the diagram the whole screen.
+- **Sun/moon button** switches between the dark and light themes; your choice is remembered.
+- **Resize the panels** by dragging the line between the code and the diagram, and the line above **Output** (double-click a line to reset it). Click **Output** to fold it away. Sizes are remembered.
+- **⌃** (right of the tabs) folds the top into one slim bar, for small or zoomed-in screens like a zoomed VS Code panel: the step buttons, the step number and a view picker. **⌄** brings it back.
 
 ## Using it with a class
 
